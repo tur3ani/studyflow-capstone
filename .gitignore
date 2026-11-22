@@ -1,0 +1,20 @@
+# .NET
+bin/
+obj/
+*.user
+*.suo
+backend/StudyApp.Api/App_Data/
+backend/StudyApp.Api/appsettings.Local.json
+
+# Node / Frontend
+node_modules/
+frontend/dist/
+frontend/.env.local
+*.tsbuildinfo
+
+# IDE / OS
+.vs/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

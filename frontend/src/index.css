@@ -1,0 +1,117 @@
+@import "tailwindcss";
+
+:root {
+  --bg-canvas: #fbf9f5;
+  --bg-sidebar: #f4f0e8;
+  --bg-surface: #ffffff;
+  --bg-elevated: #f8f5ef;
+  --bg-hover: #eee9df;
+  --border-subtle: #e7e1d6;
+  --border-strong: #d6cec0;
+
+  --ink-primary: #1c1917;
+  --ink-secondary: #57534e;
+  --ink-muted: #8c857b;
+
+  --accent: #2c4a7c;
+  --accent-hover: #213a63;
+  --accent-soft: #eaf0f8;
+  --accent-border: #c5d5ec;
+
+  --warm: #b45309;
+  --warm-soft: #fef3c7;
+  --warm-border: #f3d28c;
+
+  --sage: #15803d;
+  --sage-soft: #e7f6ec;
+  --sage-border: #b8e3c7;
+
+  --danger: #b91c1c;
+  --danger-soft: #fee2e2;
+}
+
+.dark {
+  --bg-canvas: #141312;
+  --bg-sidebar: #191715;
+  --bg-surface: #1e1c19;
+  --bg-elevated: #25221f;
+  --bg-hover: #2c2824;
+  --border-subtle: #2f2b26;
+  --border-strong: #413c35;
+
+  --ink-primary: #f4f0e8;
+  --ink-secondary: #b7afa3;
+  --ink-muted: #7d766d;
+
+  --accent: #6c9be0;
+  --accent-hover: #83aee9;
+  --accent-soft: rgba(108, 155, 224, 0.14);
+  --accent-border: rgba(108, 155, 224, 0.34);
+
+  --warm: #f59e0b;
+  --warm-soft: rgba(245, 158, 11, 0.14);
+  --warm-border: rgba(245, 158, 11, 0.35);
+
+  --sage: #34d399;
+  --sage-soft: rgba(52, 211, 153, 0.14);
+  --sage-border: rgba(52, 211, 153, 0.32);
+
+  --danger: #f87171;
+  --danger-soft: rgba(248, 113, 113, 0.14);
+}
+
+@layer base {
+  html,
+  body {
+    background-color: var(--bg-canvas);
+    color: var(--ink-primary);
+    font-family: 'Inter', 'IBM Plex Sans Arabic', system-ui, -apple-system, sans-serif;
+    transition: background-color 180ms ease, color 180ms ease;
+  }
+
+  [dir="rtl"] {
+    font-family: 'IBM Plex Sans Arabic', 'Inter', system-ui, sans-serif;
+  }
+}
+
+.font-editorial {
+  font-family: 'Newsreader', 'IBM Plex Sans Arabic', Georgia, serif;
+}
+
+.font-mono-tech {
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+}
+
+@keyframes citationPulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(180, 83, 9, 0.45);
+  }
+  70% {
+    box-shadow: 0 0 0 10px rgba(180, 83, 9, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(180, 83, 9, 0);
+  }
+}
+
+.citation-pulse {
+  animation: citationPulse 1.4s ease-out 2;
+}
+
+::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--ink-muted);
+}
