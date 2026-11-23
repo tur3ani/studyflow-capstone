@@ -17,7 +17,13 @@ public sealed record UserDto(
     string Email,
     string DisplayName,
     string PreferredLanguage,
+    int DailyGoalPoints,
     Guid DefaultWorkspaceId);
+
+public sealed record UpdateProfileRequest(
+    [Required, MinLength(2), MaxLength(160)] string DisplayName,
+    [Required, MaxLength(16)] string PreferredLanguage,
+    [Range(2, 50)] int DailyGoalPoints);
 
 public sealed record AuthResponse(
     string AccessToken,

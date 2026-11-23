@@ -1,5 +1,6 @@
 import type {
   AuthResponse,
+  CreateManualQuizQuestionRequest,
   CreateNoteRequest,
   CreateStudySessionRequest,
   DashboardResponse,
@@ -14,6 +15,7 @@ import type {
   StudySessionDto,
   SubmitQuizAttemptResponse,
   UpdateNoteRequest,
+  UpdateProfileRequest,
   UserDto,
 } from '../types/models';
 
@@ -84,6 +86,12 @@ export const api = {
     }),
 
   me: () => request<UserDto>('/api/auth/me'),
+
+  updateProfile: (payload: UpdateProfileRequest) =>
+    request<UserDto>('/api/auth/profile', {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
 
   listProjects: () => request<ProjectSummaryDto[]>('/api/projects'),
 
@@ -181,6 +189,12 @@ export const api = {
 
   getDocumentQuiz: (documentId: string) =>
     request<QuizQuestionDto[]>(`/api/documents/${documentId}/quiz`),
+
+  createManualQuizQuestion: (documentId: string, payload: CreateManualQuizQuestionRequest) =>
+    request<QuizQuestionDto>(`/api/documents/${documentId}/quiz/questions`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
 
   generateDocumentQuiz: (documentId: string, questionCount = 4) =>
     request<QuizQuestionDto[]>(`/api/documents/${documentId}/quiz/generate`, {

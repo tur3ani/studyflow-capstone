@@ -35,6 +35,91 @@ public sealed class QuizzesController(AppDbContext db) : ControllerBase
         return Ok(questions.Select(MapQuestion).ToList());
     }
 
+    /// <summary>
+    /// Non-AI study pipeline: lets the student author their own MCQ or Written self-test question
+    /// anchored directly to a specific passage chunk.
+    /// </summary>
+    [HttpPost("api/documents/{documentId:guid}/quiz/questions")]
+    public async Task<ActionResult<QuizQuestionDto>> CreateManualQuestion(
+        Guid documentId,
+        CreateManualQuizQuestionRequest request,
+        CancellationToken ct)
+    {
+        var userId = User.GetUserId();
+        var chunk = await db.DocumentChunks
+            .Include(c => c.Document)
+            .FirstOrDefaultAsync(
+                c => c.Id == request.ChunkId
+                     && c.DocumentId == documentId
+                     && c.Document.Project.Workspace.OwnerId == userId,
+                ct);
+
+        if (chunk is null)
+        {
+            return NotFound(new { message = "Referenced passage chunk not found in this lecture." });
+        }
+
+        var session = await db.StudySessions
+            .Where(s => s.DocumentId == documentId && s.UserId == userId && s.Mode == "manual_quiz")
+            .OrderByDescending(s => s.StartedAt)
+            .FirstOrDefaultAsync(ct);
+
+        if (session is null)
+        {
+            session = new StudySession
+            {
+                ProjectId = chunk.Document.ProjectId,
+                DocumentId = documentId,
+                UserId = userId,
+                Mode = "manual_quiz",
+                Goal = $"Self-authored quiz for {chunk.Document.Title}",
+                SelectedChunkIdsJson = JsonSerializer.Serialize(new[] { chunk.Id })
+            };
+            db.StudySessions.Add(session);
+        }
+
+        var normalizedType = string.Equals(request.QuestionType, "mcq", StringComparison.OrdinalIgnoreCase)
+            ? "mcq"
+            : "written";
+
+        var cleanedOptions = (request.Options ?? [])
+            .Select(o => o.Trim())
+            .Where(o => !string.IsNullOrWhiteSpace(o))
+            .Distinct()
+            .ToList();
+
+        if (normalizedType == "mcq" && cleanedOptions.Count < 2)
+        {
+            return BadRequest(new { message = "Multiple-choice questions require at least 2 options." });
+        }
+
+        var correct = normalizedType == "mcq"
+            ? (string.IsNullOrWhiteSpace(request.CorrectOption) ? cleanedOptions[0] : request.CorrectOption.Trim())
+            : null;
+
+        var question = new QuizQuestion
+        {
+            Session = session,
+            DocumentId = documentId,
+            ChunkId = chunk.Id,
+            Chunk = chunk,
+            QuestionType = normalizedType,
+            Prompt = request.Prompt.Trim(),
+            OptionsJson = normalizedType == "mcq" ? JsonSerializer.Serialize(cleanedOptions) : "[]",
+            AnswerKeyJson = normalizedType == "mcq"
+                ? JsonSerializer.Serialize(new { correct })
+                : JsonSerializer.Serialize(new { expected = request.ExpectedPoints?.Trim() ?? chunk.Content }),
+            ExpectedPoints = string.IsNullOrWhiteSpace(request.ExpectedPoints)
+                ? chunk.Content
+                : request.ExpectedPoints.Trim()
+        };
+
+        db.QuizQuestions.Add(question);
+        await db.SaveChangesAsync(ct);
+
+        return Ok(MapQuestion(question));
+    }
+
     [HttpPost("api/documents/{documentId:guid}/quiz/generate")]
     public async Task<ActionResult<IReadOnlyList<QuizQuestionDto>>> Generate(
         Guid documentId,

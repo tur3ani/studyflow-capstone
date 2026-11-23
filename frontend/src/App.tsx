@@ -7,6 +7,7 @@ import {
   NotebookPen,
   PanelLeftOpen,
   Search,
+  Settings,
   Sun,
 } from 'lucide-react';
 import { api } from './api/client';
@@ -15,6 +16,7 @@ import { CommandPalette } from './components/CommandPalette';
 import { DashboardHome } from './components/DashboardHome';
 import { NotesView } from './components/NotesView';
 import { ReaderView, type ReaderSplitMode } from './components/ReaderView';
+import { SettingsView } from './components/SettingsView';
 import { Sidebar } from './components/Sidebar';
 import { TechniquesView } from './components/TechniquesView';
 import { useAuth } from './context/AuthContext';
@@ -29,12 +31,14 @@ import type {
   ProjectSummaryDto,
   StudyNoteDto,
   StudySessionDto,
+  UpdateProfileRequest,
 } from './types/models';
 
+type AppView = 'dashboard' | 'settings' | 'course';
 type LectureTab = 'reader' | 'notes' | 'techniques';
 
 export default function App() {
-  const { user, loading: authLoading, logout } = useAuth();
+  const { user, loading: authLoading, updateProfile, logout } = useAuth();
   const { theme, toggleTheme } = useTheme();
 
   const [health, setHealth] = useState<HealthResponse | null>(null);
@@ -50,8 +54,7 @@ export default function App() {
   const [notes, setNotes] = useState<StudyNoteDto[]>([]);
   const [sessions, setSessions] = useState<StudySessionDto[]>([]);
 
-  // System Home Dashboard (main dashboard) vs Lecture Studio (Read & Explain | Notes | Techniques)
-  const [showDashboard, setShowDashboard] = useState(true);
+  const [activeView, setActiveView] = useState<AppView>('dashboard');
   const [lectureTab, setLectureTab] = useState<LectureTab>('reader');
 
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -180,11 +183,27 @@ export default function App() {
     return <AuthPage />;
   }
 
+  const handleSaveProfile = async (payload: UpdateProfileRequest) => {
+    await updateProfile(payload);
+    await refreshDashboard();
+    notify('Profile & daily goal saved');
+  };
+
+  const handleUpdateDailyGoal = async (goalPoints: number) => {
+    await updateProfile({
+      displayName: user.displayName,
+      preferredLanguage: user.preferredLanguage,
+      dailyGoalPoints: goalPoints,
+    });
+    await refreshDashboard();
+    notify(`Daily study goal updated to ${goalPoints} pts/day`);
+  };
+
   const handleCreateProject = async (name: string, courseCode: string) => {
     const created = await api.createProject({ name, courseCode: courseCode || undefined });
     setProjects((prev) => [created, ...prev]);
     setSelectedProjectId(created.id);
-    setShowDashboard(false);
+    setActiveView('course');
     setLectureTab('reader');
     await refreshDashboard();
     notify(`Created course "${created.name}"`);
@@ -201,7 +220,7 @@ export default function App() {
       setSelectedChunkId(detail.chunks[0]?.id ?? null);
       setSplitMode('none');
       setPdfViewPage(1);
-      setShowDashboard(false);
+      setActiveView('course');
       setLectureTab('reader');
       await Promise.all([refreshProjects(), refreshDashboard()]);
       notify(`Imported "${detail.title}" (${detail.chunks.length} passages)`);
@@ -220,7 +239,7 @@ export default function App() {
       setHighlightedChunkId(null);
       setSplitMode('none');
       setPdfViewPage(1);
-      setShowDashboard(false);
+      setActiveView('course');
       setLectureTab('reader');
     } catch (err) {
       notify(err instanceof Error ? err.message : 'Could not open lecture.', 'error');
@@ -261,7 +280,7 @@ export default function App() {
     notify('Lecture removed');
   };
 
-  const handleSaveExplanationAsNote = async (payload: {
+  const handleSaveNote = async (payload: {
     chunk: DocumentChunkDto;
     title: string;
     contentMarkdown: string;
@@ -278,11 +297,17 @@ export default function App() {
       contentMarkdown: payload.contentMarkdown,
       sourcePageNumber: payload.sourcePageNumber,
       language: payload.language,
-      sourceType: payload.sourceType ?? 'AiExplanationEdited',
+      sourceType: payload.sourceType ?? 'Manual',
     });
     setNotes((prev) => [created, ...prev]);
     await Promise.all([refreshProjects(), refreshDashboard()]);
-    notify(`Saved "${created.title}" to Notes (Page ${payload.sourcePageNumber})`);
+    const label =
+      payload.sourceType === 'Highlight'
+        ? `Highlighted on Page ${payload.sourcePageNumber}`
+        : payload.sourceType === 'GlossaryTerm'
+          ? `Added "${created.title}" to Glossary & Flashcards`
+          : `Saved "${created.title}" (Page ${payload.sourcePageNumber})`;
+    notify(label);
   };
 
   const handleUpdateNote = async (
@@ -323,7 +348,7 @@ export default function App() {
       setSplitMode('pdf');
     }
 
-    setShowDashboard(false);
+    setActiveView('course');
     setLectureTab('reader');
   };
 
@@ -339,7 +364,7 @@ export default function App() {
       setHighlightedChunkId(targetChunkId);
       setPdfViewPage(insight.pageNumber ?? 1);
     }
-    setShowDashboard(false);
+    setActiveView('course');
     setLectureTab('reader');
   };
 
@@ -363,7 +388,7 @@ export default function App() {
     const updated = await api.saveSessionRecall(sessionId, recallText);
     setSessions((prev) => prev.map((s) => (s.id === sessionId ? updated : s)));
     await refreshDashboard();
-    notify('Independent recall saved to PostgreSQL');
+    notify('Independent recall saved (+3 heatmap pts)');
     return updated;
   };
 
@@ -373,7 +398,7 @@ export default function App() {
   };
 
   const lectureTabs: { id: LectureTab; label: string; icon: typeof BookOpen; badge?: number }[] = [
-    { id: 'reader', label: 'Read & Explain', icon: BookOpen },
+    { id: 'reader', label: 'Study Reader', icon: BookOpen },
     { id: 'notes', label: 'Notes', icon: NotebookPen, badge: notes.length },
     { id: 'techniques', label: 'Techniques', icon: Compass },
   ];
@@ -432,17 +457,17 @@ export default function App() {
         notes={notes}
         onToggleTheme={toggleTheme}
         onToggleZen={() => {
-          setShowDashboard(false);
+          setActiveView('course');
           setLectureTab('reader');
           setZenMode((v) => !v);
         }}
         onToggleSplitNotes={() => {
-          setShowDashboard(false);
+          setActiveView('course');
           setLectureTab('reader');
           setSplitMode((m) => (m === 'notes' ? 'none' : 'notes'));
         }}
         onToggleSplitPdf={() => {
-          setShowDashboard(false);
+          setActiveView('course');
           setLectureTab('reader');
           if (splitMode === 'pdf') {
             setSplitMode('none');
@@ -453,54 +478,55 @@ export default function App() {
         }}
         onOpenDashboard={() => {
           setZenMode(false);
-          setShowDashboard(true);
+          setActiveView('dashboard');
           void refreshDashboard();
         }}
         onSwitchMode={(tab) => {
-          setShowDashboard(false);
+          setActiveView('course');
           setLectureTab(tab);
         }}
         onTriggerUpload={() => fileInputRef.current?.click()}
         onSelectProject={(id) => {
           setSelectedProjectId(id);
-          setShowDashboard(false);
+          setActiveView('course');
           setLectureTab('reader');
         }}
         onSelectDocument={(id) => void handleSelectDocument(id)}
         onJumpToChunk={(chunkId) => {
-          setShowDashboard(false);
+          setActiveView('course');
           setLectureTab('reader');
           setSelectedChunkId(chunkId);
           setHighlightedChunkId(chunkId);
         }}
         onOpenNote={(note) => {
           setFocusedNoteId(note.id);
-          setShowDashboard(false);
+          setActiveView('course');
           setLectureTab('notes');
         }}
       />
 
-      {/* Collapsible Library Sidebar */}
+      {/* Collapsible Sidebar (Courses ONLY on Home Dashboard / Settings; Lecture Sources appear inside a Course) */}
       {sidebarOpen && !zenMode && (
         <Sidebar
           user={user}
           health={health}
-          isDashboardActive={showDashboard}
+          activeView={activeView}
           projects={projects}
           selectedProjectId={selectedProjectId}
           documents={documents}
-          selectedDocumentId={showDashboard ? null : (selectedDocument?.id ?? null)}
+          selectedDocumentId={activeView === 'course' ? (selectedDocument?.id ?? null) : null}
           uploading={uploading}
           onOpenDashboard={() => {
-            setShowDashboard(true);
+            setActiveView('dashboard');
             void refreshDashboard();
           }}
+          onOpenSettings={() => setActiveView('settings')}
           onTriggerUpload={() => fileInputRef.current?.click()}
           onCollapse={() => setSidebarOpen(false)}
           onOpenCommandPalette={() => setPaletteOpen(true)}
           onSelectProject={(id) => {
             setSelectedProjectId(id);
-            setShowDashboard(false);
+            setActiveView('course');
             setLectureTab('reader');
           }}
           onCreateProject={handleCreateProject}
@@ -514,7 +540,6 @@ export default function App() {
 
       {/* Main Studio Shell */}
       <div className="flex-1 flex flex-col min-w-0 h-screen overflow-hidden">
-        {/* Top Bar: Clean Dashboard Header when on Home, or 3-Tab Lecture Studio Rail when inside a Course/Lecture */}
         {!zenMode && (
           <header
             className="h-14 shrink-0 px-4 border-b flex items-center justify-between gap-4"
@@ -541,17 +566,26 @@ export default function App() {
                 </button>
               )}
 
-              {showDashboard ? (
+              {activeView === 'dashboard' && (
                 <span className="inline-flex items-center gap-2 text-xs font-semibold">
                   <Home className="h-3.5 w-3.5" style={{ color: 'var(--accent)' }} />
-                  Student Dashboard
+                  Home Dashboard
                 </span>
-              ) : (
+              )}
+
+              {activeView === 'settings' && (
+                <span className="inline-flex items-center gap-2 text-xs font-semibold">
+                  <Settings className="h-3.5 w-3.5" style={{ color: 'var(--accent)' }} />
+                  Settings
+                </span>
+              )}
+
+              {activeView === 'course' && (
                 <div className="flex items-center gap-1.5 text-xs min-w-0">
                   <button
                     type="button"
                     onClick={() => {
-                      setShowDashboard(true);
+                      setActiveView('dashboard');
                       void refreshDashboard();
                     }}
                     className="hover:underline cursor-pointer shrink-0"
@@ -568,8 +602,8 @@ export default function App() {
               )}
             </div>
 
-            {/* Center: Only show Lecture Studio Tabs when inside a Course/Lecture */}
-            {!showDashboard && (
+            {/* Center: Lecture Studio Tabs ONLY when inside a Course */}
+            {activeView === 'course' && (
               <nav
                 className="flex items-center rounded-2xl p-1 border"
                 style={{
@@ -618,7 +652,7 @@ export default function App() {
               </nav>
             )}
 
-            {/* Right: Command Palette + Theme when collapsed */}
+            {/* Right: Clean Command Palette + Theme (when collapsed) — Mode lives in Sidebar */}
             <div className="flex items-center gap-1.5 shrink-0">
               <button
                 type="button"
@@ -654,23 +688,21 @@ export default function App() {
           </header>
         )}
 
-        {/* Viewport: Main System Dashboard OR Active Lecture Studio Tab */}
-        {showDashboard ? (
+        {/* Active Viewport */}
+        {activeView === 'dashboard' && (
           <DashboardHome
             dashboard={dashboard}
-            projects={projects}
-            recentDocuments={documents}
-            uploading={uploading}
-            onTriggerUpload={() => fileInputRef.current?.click()}
-            onOpenProject={(projectId) => {
-              setSelectedProjectId(projectId);
-              setShowDashboard(false);
-              setLectureTab('reader');
-            }}
-            onOpenLecture={(docId) => void handleSelectDocument(docId)}
+            onUpdateDailyGoal={handleUpdateDailyGoal}
+            onOpenSettings={() => setActiveView('settings')}
             onJumpToInsight={handleJumpToInsight}
           />
-        ) : (
+        )}
+
+        {activeView === 'settings' && (
+          <SettingsView user={user} onSaveProfile={handleSaveProfile} />
+        )}
+
+        {activeView === 'course' && (
           <>
             {lectureTab === 'reader' && (
               <ReaderView
@@ -693,7 +725,7 @@ export default function App() {
                 }}
                 onOpenPdfAtPage={openPdfAtPage}
                 onTriggerUpload={() => fileInputRef.current?.click()}
-                onSaveExplanationAsNote={handleSaveExplanationAsNote}
+                onSaveNote={handleSaveNote}
                 onUpdateNote={handleUpdateNote}
                 onDeleteNote={handleDeleteNote}
                 onJumpToChunk={(chunkId, openPdfPage) => {
@@ -728,6 +760,16 @@ export default function App() {
                 sessions={sessions}
                 onCreateSession={handleCreateSession}
                 onSaveRecall={handleSaveRecall}
+                onSaveManualFlashcard={({ chunk, front, back }) =>
+                  handleSaveNote({
+                    chunk,
+                    title: front,
+                    contentMarkdown: back,
+                    sourcePageNumber: chunk.pageNumber,
+                    language: /[\u0600-\u06FF]/.test(back) ? 'ar' : 'en',
+                    sourceType: 'GlossaryTerm',
+                  })
+                }
                 onJumpToChunkInReader={(chunkId, pageNumber) => {
                   setSelectedChunkId(chunkId);
                   setHighlightedChunkId(chunkId);

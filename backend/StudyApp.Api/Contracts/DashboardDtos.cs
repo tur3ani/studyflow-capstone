@@ -3,7 +3,15 @@ namespace StudyApp.Api.Contracts;
 public sealed record HeatmapDayDto(
     string Date,
     int Count,
-    int Level);
+    int Level,
+    bool GoalMet);
+
+public sealed record GeneralInsightDto(
+    string Category,
+    string Headline,
+    string Observation,
+    string Severity,
+    int AffectedCount);
 
 public sealed record InsightPointDto(
     string Title,
@@ -20,6 +28,9 @@ public sealed record DashboardResponse(
     string Email,
     string PreferredLanguage,
     DateTimeOffset MemberSince,
+    int DailyGoalPoints,
+    int TodayPoints,
+    int GoalMetDays,
     int TotalCourses,
     int TotalLectures,
     int TotalNotes,
@@ -28,5 +39,6 @@ public sealed record DashboardResponse(
     int CurrentStreakDays,
     int IndependenceScorePercent,
     IReadOnlyList<HeatmapDayDto> Heatmap,
+    IReadOnlyList<GeneralInsightDto> GeneralWeakPoints,
     IReadOnlyList<InsightPointDto> StrongPoints,
-    IReadOnlyList<InsightPointDto> WeakPoints);
+    IReadOnlyList<InsightPointDto> DetailedWeakPoints);

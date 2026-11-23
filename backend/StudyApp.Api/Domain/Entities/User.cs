@@ -7,6 +7,7 @@ public sealed class User
     public string DisplayName { get; set; } = string.Empty;
     public string PasswordHash { get; set; } = string.Empty;
     public string PreferredLanguage { get; set; } = "ar";
+    public int DailyGoalPoints { get; set; } = 6;
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
 
     public ICollection<Workspace> Workspaces { get; set; } = [];

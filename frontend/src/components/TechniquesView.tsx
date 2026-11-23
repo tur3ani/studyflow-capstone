@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import {
   Brain,
   CheckCircle2,
@@ -7,12 +7,15 @@ import {
   HelpCircle,
   Layers,
   Loader2,
+  Plus,
   RotateCcw,
   Sparkles,
   XCircle,
 } from 'lucide-react';
 import { api } from '../api/client';
+import { useAiPreferences } from '../context/AiPreferencesContext';
 import type {
+  DocumentChunkDto,
   DocumentDetailDto,
   QuizQuestionDto,
   StudyNoteDto,
@@ -29,6 +32,11 @@ interface TechniquesViewProps {
   sessions: StudySessionDto[];
   onCreateSession: (goal: string, selectedChunkIds: string[]) => Promise<StudySessionDto>;
   onSaveRecall: (sessionId: string, recallText: string) => Promise<StudySessionDto>;
+  onSaveManualFlashcard: (payload: {
+    chunk: DocumentChunkDto;
+    front: string;
+    back: string;
+  }) => Promise<void>;
   onJumpToChunkInReader: (chunkId: string, pageNumber?: number) => void;
   onQuizAttemptSaved: () => void;
 }
@@ -40,32 +48,54 @@ export function TechniquesView({
   sessions,
   onCreateSession,
   onSaveRecall,
+  onSaveManualFlashcard,
   onJumpToChunkInReader,
   onQuizAttemptSaved,
 }: TechniquesViewProps) {
+  const { canUseAiQuiz } = useAiPreferences();
   const [activeTechnique, setActiveTechnique] = useState<TechniqueKind>('recall');
 
-  // --- Quizzes State ---
+  // --- Quizzes State (Non-AI Manual Authoring First + Optional AI Drafts) ---
   const [questions, setQuestions] = useState<QuizQuestionDto[]>([]);
   const [loadingQuiz, setLoadingQuiz] = useState(false);
   const [generatingQuiz, setGeneratingQuiz] = useState(false);
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [submittingId, setSubmittingId] = useState<string | null>(null);
 
+  // Manual Quiz Composer
+  const [showQuizBuilder, setShowQuizBuilder] = useState(false);
+  const [qChunkId, setQChunkId] = useState('');
+  const [qType, setQType] = useState<'written' | 'mcq'>('written');
+  const [qPrompt, setQPrompt] = useState('');
+  const [qOpt1, setQOpt1] = useState('');
+  const [qOpt2, setQOpt2] = useState('');
+  const [qOpt3, setQOpt3] = useState('');
+  const [qCorrectIdx, setQCorrectIdx] = useState(0);
+  const [qExpected, setQExpected] = useState('');
+  const [savingQuestion, setSavingQuestion] = useState(false);
+
   // --- Mind Map State ---
   const [selectedMapChunkId, setSelectedMapChunkId] = useState<string | null>(null);
 
-  // --- Flashcards State ---
+  // --- Flashcards State (Manual Card Builder + Note/Highlight Deck) ---
   const [cardIndex, setCardIndex] = useState(0);
   const [flipped, setFlipped] = useState(false);
   const [masteredCardIds, setMasteredCardIds] = useState<Set<string>>(() => new Set());
+  const [showCardBuilder, setShowCardBuilder] = useState(false);
+  const [cardFront, setCardFront] = useState('');
+  const [cardBack, setCardBack] = useState('');
+  const [cardChunkId, setCardChunkId] = useState('');
+  const [savingCard, setSavingCard] = useState(false);
 
   useEffect(() => {
     if (!doc) {
       setQuestions([]);
       return;
     }
-    setSelectedMapChunkId(doc.chunks[0]?.id ?? null);
+    const firstChunkId = doc.chunks[0]?.id ?? '';
+    setSelectedMapChunkId(firstChunkId || null);
+    setQChunkId(firstChunkId);
+    setCardChunkId(firstChunkId);
     setCardIndex(0);
     setFlipped(false);
 
@@ -77,7 +107,7 @@ export function TechniquesView({
       .finally(() => setLoadingQuiz(false));
   }, [doc?.id]);
 
-  // Build Flashcard Deck from Saved Notes (first) + Key Lecture Passages
+  // Build Flashcard Deck from Student Glossary Terms, Saved Notes & Key Passages (100% Non-AI)
   const flashcardDeck = useMemo(() => {
     const docNotes = notes.filter((n) => !doc || n.documentId === doc.id);
     const fromNotes = docNotes.map((n) => ({
@@ -86,16 +116,21 @@ export function TechniquesView({
       back: n.contentMarkdown,
       pageNumber: n.sourcePageNumber ?? 1,
       chunkId: n.chunkId ?? null,
-      origin: 'Your Note',
+      origin:
+        n.sourceType === 'GlossaryTerm'
+          ? 'Your Flashcard / Term'
+          : n.sourceType === 'Highlight'
+            ? 'Your Highlight'
+            : 'Your Note',
       isRtl: n.language === 'ar',
     }));
 
     const fromChunks = (doc?.chunks ?? [])
       .filter((c) => !c.needsOcr)
-      .slice(0, 8)
+      .slice(0, 6)
       .map((c) => ({
         id: `chunk-${c.id}`,
-        front: c.heading || `Explain Page ${c.pageNumber} · Passage #${c.chunkIndex}`,
+        front: c.heading || `Recall Page ${c.pageNumber} · Passage #${c.chunkIndex}`,
         back: c.content,
         pageNumber: c.pageNumber,
         chunkId: c.id,
@@ -103,10 +138,15 @@ export function TechniquesView({
         isRtl: false,
       }));
 
-    return fromNotes.length > 0 ? [...fromNotes, ...fromChunks.slice(0, 4)] : fromChunks;
+    return fromNotes.length > 0 ? [...fromNotes, ...fromChunks.slice(0, 3)] : fromChunks;
   }, [notes, doc]);
 
-  // Build Mind Map grouped by Page
+  const notedChunkIds = useMemo(
+    () => new Set(notes.filter((n) => n.documentId === doc?.id && n.chunkId).map((n) => n.chunkId!)),
+    [notes, doc?.id]
+  );
+
+  // Build Mind Map grouped by Page (100% deterministic lecture structure)
   const mindMapGroups = useMemo(() => {
     if (!doc) return [];
     const byPage = new Map<number, typeof doc.chunks>();
@@ -117,6 +157,39 @@ export function TechniquesView({
     }
     return Array.from(byPage.entries()).sort((a, b) => a[0] - b[0]);
   }, [doc]);
+
+  const handleCreateManualQuestion = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!doc || !qChunkId || !qPrompt.trim()) return;
+
+    const options =
+      qType === 'mcq' ? [qOpt1, qOpt2, qOpt3].map((o) => o.trim()).filter(Boolean) : undefined;
+    const correctOption =
+      qType === 'mcq' && options && options.length >= 2
+        ? options[Math.min(qCorrectIdx, options.length - 1)]
+        : undefined;
+
+    setSavingQuestion(true);
+    try {
+      const created = await api.createManualQuizQuestion(doc.id, {
+        chunkId: qChunkId,
+        questionType: qType,
+        prompt: qPrompt.trim(),
+        options,
+        correctOption,
+        expectedPoints: qExpected.trim() || undefined,
+      });
+      setQuestions((prev) => [created, ...prev]);
+      setQPrompt('');
+      setQOpt1('');
+      setQOpt2('');
+      setQOpt3('');
+      setQExpected('');
+      setShowQuizBuilder(false);
+    } finally {
+      setSavingQuestion(false);
+    }
+  };
 
   const handleGenerateQuiz = async () => {
     if (!doc) return;
@@ -144,15 +217,39 @@ export function TechniquesView({
     }
   };
 
-  const techniqueTabs: { id: TechniqueKind; label: string; icon: typeof Brain; desc: string }[] = [
-    { id: 'recall', label: 'Active Recall', icon: Brain, desc: '3-step closed-book memory' },
-    { id: 'quizzes', label: 'Quizzes', icon: HelpCircle, desc: 'Source-grounded MCQ & written' },
-    { id: 'mindmap', label: 'Mind Map', icon: GitBranch, desc: 'Visual lecture concept tree' },
-    { id: 'flashcards', label: 'Flashcards', icon: Layers, desc: 'Flip-deck from notes & slides' },
+  const handleCreateCard = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!doc || !cardFront.trim() || !cardBack.trim()) return;
+    const chunk = doc.chunks.find((c) => c.id === cardChunkId) ?? doc.chunks[0];
+    if (!chunk) return;
+
+    setSavingCard(true);
+    try {
+      await onSaveManualFlashcard({
+        chunk,
+        front: cardFront.trim(),
+        back: cardBack.trim(),
+      });
+      setCardFront('');
+      setCardBack('');
+      setShowCardBuilder(false);
+      setCardIndex(0);
+      setFlipped(false);
+    } finally {
+      setSavingCard(false);
+    }
+  };
+
+  const techniqueTabs: { id: TechniqueKind; label: string; icon: typeof Brain }[] = [
+    { id: 'recall', label: 'Active Recall', icon: Brain },
+    { id: 'quizzes', label: 'Quizzes', icon: HelpCircle },
+    { id: 'mindmap', label: 'Mind Map', icon: GitBranch },
+    { id: 'flashcards', label: 'Flashcards', icon: Layers },
   ];
 
   const currentCard = flashcardDeck[cardIndex] ?? null;
-  const selectedMapChunk = doc?.chunks.find((c) => c.id === selectedMapChunkId) ?? doc?.chunks[0] ?? null;
+  const selectedMapChunk =
+    doc?.chunks.find((c) => c.id === selectedMapChunkId) ?? doc?.chunks[0] ?? null;
 
   return (
     <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
@@ -198,7 +295,7 @@ export function TechniquesView({
         })}
       </div>
 
-      {/* Technique 1: Active Recall */}
+      {/* Technique 1: Active Recall (100% Non-AI) */}
       {activeTechnique === 'recall' && (
         <ActiveRecallView
           projectId={projectId}
@@ -210,45 +307,217 @@ export function TechniquesView({
         />
       )}
 
-      {/* Technique 2: Interactive Quizzes (PostgreSQL persisted) */}
+      {/* Technique 2: Self-Authored Quizzes First + Optional AI Drafts */}
       {activeTechnique === 'quizzes' && (
         <div className="flex-1 overflow-y-auto px-6 sm:px-10 lg:px-14 py-9">
           <div className="max-w-4xl mx-auto space-y-6">
             {!doc ? (
               <div className="py-16 text-center text-xs" style={{ color: 'var(--ink-muted)' }}>
-                Select a lecture from the sidebar to generate quizzes.
+                Select a lecture from the sidebar to create or take quizzes.
               </div>
             ) : (
               <>
                 <header className="flex flex-wrap items-center justify-between gap-4">
                   <div>
                     <div className="text-xs font-medium uppercase tracking-widest mb-1" style={{ color: 'var(--accent)' }}>
-                      Source-Grounded Quizzes
+                      Source-Anchored Quizzes
                     </div>
                     <h2 className="font-editorial text-3xl font-medium" dir="auto">
                       {doc.title}
                     </h2>
                     <p className="text-xs mt-1" style={{ color: 'var(--ink-secondary)' }}>
-                      Attempts are saved in PostgreSQL and automatically update your Strong & Weak
-                      Points on the Home Dashboard.
+                      Author your own self-test questions from any passage. Every attempt updates
+                      your Strong & Weak Points on the Home Dashboard.
                     </p>
                   </div>
 
-                  <button
-                    type="button"
-                    disabled={generatingQuiz}
-                    onClick={() => void handleGenerateQuiz()}
-                    className="inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-medium text-white cursor-pointer disabled:opacity-50"
-                    style={{ backgroundColor: 'var(--accent)' }}
-                  >
-                    {generatingQuiz ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <Sparkles className="h-4 w-4" />
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <button
+                      type="button"
+                      onClick={() => setShowQuizBuilder((v) => !v)}
+                      className="inline-flex items-center gap-1.5 rounded-xl px-4 py-2.5 text-xs font-medium text-white cursor-pointer"
+                      style={{ backgroundColor: 'var(--accent)' }}
+                    >
+                      <Plus className="h-4 w-4" />
+                      Add Question
+                    </button>
+
+                    {canUseAiQuiz && (
+                      <button
+                        type="button"
+                        disabled={generatingQuiz}
+                        onClick={() => void handleGenerateQuiz()}
+                        className="inline-flex items-center gap-1.5 rounded-xl border px-3.5 py-2.5 text-xs font-medium cursor-pointer disabled:opacity-50"
+                        style={{
+                          backgroundColor: 'var(--accent-soft)',
+                          borderColor: 'var(--accent-border)',
+                          color: 'var(--accent)',
+                        }}
+                      >
+                        {generatingQuiz ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <Sparkles className="h-3.5 w-3.5" />
+                        )}
+                        {generatingQuiz ? 'Drafting...' : 'Draft with AI'}
+                      </button>
                     )}
-                    {generatingQuiz ? 'Generating...' : 'Generate New Quiz'}
-                  </button>
+                  </div>
                 </header>
+
+                {/* Non-AI Manual Question Authoring Form */}
+                {showQuizBuilder && (
+                  <form
+                    onSubmit={handleCreateManualQuestion}
+                    className="rounded-3xl border p-6 space-y-4"
+                    style={{
+                      backgroundColor: 'var(--bg-surface)',
+                      borderColor: 'var(--accent-border)',
+                    }}
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <span className="text-xs font-semibold">Create Self-Test Question</span>
+                      <div className="flex items-center gap-1.5">
+                        {(
+                          [
+                            ['written', 'Written Recall'],
+                            ['mcq', 'Multiple Choice'],
+                          ] as const
+                        ).map(([t, label]) => (
+                          <button
+                            key={t}
+                            type="button"
+                            onClick={() => setQType(t)}
+                            className="px-2.5 py-1 rounded-lg text-[11px] font-medium cursor-pointer"
+                            style={
+                              qType === t
+                                ? { backgroundColor: 'var(--accent)', color: '#ffffff' }
+                                : { backgroundColor: 'var(--bg-elevated)', color: 'var(--ink-secondary)' }
+                            }
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-medium mb-1" style={{ color: 'var(--ink-secondary)' }}>
+                        Source Passage Anchor
+                      </label>
+                      <select
+                        value={qChunkId}
+                        onChange={(e) => setQChunkId(e.target.value)}
+                        className="w-full rounded-xl border px-3 py-2 text-xs focus:outline-none"
+                        style={{
+                          backgroundColor: 'var(--bg-canvas)',
+                          borderColor: 'var(--border-subtle)',
+                          color: 'var(--ink-primary)',
+                        }}
+                      >
+                        {doc.chunks.map((c) => (
+                          <option key={c.id} value={c.id}>
+                            Page {c.pageNumber} · #{c.chunkIndex} — {(c.heading || c.content).slice(0, 65)}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-medium mb-1" style={{ color: 'var(--ink-secondary)' }}>
+                        Question Prompt
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        dir="auto"
+                        value={qPrompt}
+                        onChange={(e) => setQPrompt(e.target.value)}
+                        placeholder="e.g. What happens to cloud resources during both demand spikes and drops?"
+                        className="w-full rounded-xl border px-3.5 py-2 text-xs focus:outline-none"
+                        style={{
+                          backgroundColor: 'var(--bg-canvas)',
+                          borderColor: 'var(--border-subtle)',
+                          color: 'var(--ink-primary)',
+                        }}
+                      />
+                    </div>
+
+                    {qType === 'mcq' ? (
+                      <div className="space-y-2">
+                        <div className="text-[11px] font-medium" style={{ color: 'var(--ink-secondary)' }}>
+                          Choices (select the radio button for the correct answer)
+                        </div>
+                        {[
+                          { val: qOpt1, set: setQOpt1, idx: 0, ph: 'Option A (required)' },
+                          { val: qOpt2, set: setQOpt2, idx: 1, ph: 'Option B (required)' },
+                          { val: qOpt3, set: setQOpt3, idx: 2, ph: 'Option C (optional)' },
+                        ].map((o) => (
+                          <div key={o.idx} className="flex items-center gap-2">
+                            <input
+                              type="radio"
+                              name="correctOpt"
+                              checked={qCorrectIdx === o.idx}
+                              onChange={() => setQCorrectIdx(o.idx)}
+                            />
+                            <input
+                              type="text"
+                              dir="auto"
+                              required={o.idx < 2}
+                              value={o.val}
+                              onChange={(e) => o.set(e.target.value)}
+                              placeholder={o.ph}
+                              className="flex-1 rounded-xl border px-3 py-1.5 text-xs focus:outline-none"
+                              style={{
+                                backgroundColor: 'var(--bg-canvas)',
+                                borderColor: 'var(--border-subtle)',
+                                color: 'var(--ink-primary)',
+                              }}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div>
+                        <label className="block text-[11px] font-medium mb-1" style={{ color: 'var(--ink-secondary)' }}>
+                          Key Points to Check Against (optional — defaults to source passage)
+                        </label>
+                        <textarea
+                          rows={2}
+                          dir="auto"
+                          value={qExpected}
+                          onChange={(e) => setQExpected(e.target.value)}
+                          placeholder="Key concepts your answer should mention..."
+                          className="w-full rounded-xl border p-2.5 text-xs focus:outline-none"
+                          style={{
+                            backgroundColor: 'var(--bg-canvas)',
+                            borderColor: 'var(--border-subtle)',
+                            color: 'var(--ink-primary)',
+                          }}
+                        />
+                      </div>
+                    )}
+
+                    <div className="flex justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setShowQuizBuilder(false)}
+                        className="rounded-xl px-3.5 py-2 text-xs cursor-pointer"
+                        style={{ color: 'var(--ink-muted)' }}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={savingQuestion}
+                        className="rounded-xl px-4 py-2 text-xs font-medium text-white cursor-pointer disabled:opacity-50"
+                        style={{ backgroundColor: 'var(--sage)' }}
+                      >
+                        {savingQuestion ? 'Saving...' : 'Save Question'}
+                      </button>
+                    </div>
+                  </form>
+                )}
 
                 {loadingQuiz ? (
                   <div className="py-12 text-center text-xs" style={{ color: 'var(--ink-muted)' }}>
@@ -260,10 +529,11 @@ export function TechniquesView({
                     style={{ borderColor: 'var(--border-strong)', backgroundColor: 'var(--bg-surface)' }}
                   >
                     <HelpCircle className="h-8 w-8 mx-auto" style={{ color: 'var(--accent)' }} />
-                    <div className="font-editorial text-xl font-medium">No quiz questions yet</div>
-                    <p className="text-xs max-w-md mx-auto" style={{ color: 'var(--ink-secondary)' }}>
-                      Generate a mix of multiple-choice and short written recall questions grounded
-                      in this lecture's passages.
+                    <div className="font-editorial text-xl font-medium">Build your own quiz deck</div>
+                    <p className="text-xs max-w-md mx-auto leading-relaxed" style={{ color: 'var(--ink-secondary)' }}>
+                      Click <strong>Add Question</strong> to author MCQ or written recall questions
+                      linked directly to lecture pages — writing your own exam questions is one of
+                      the strongest non-AI study methods.
                     </p>
                   </div>
                 ) : (
@@ -329,7 +599,7 @@ export function TechniquesView({
                               onChange={(e) =>
                                 setAnswers((prev) => ({ ...prev, [q.id]: e.target.value }))
                               }
-                              placeholder="Write your explanation in Arabic or English..."
+                              placeholder="Write your answer in Arabic or English..."
                               className="w-full rounded-xl border p-3.5 text-xs leading-relaxed focus:outline-none"
                               style={{
                                 backgroundColor: 'var(--bg-canvas)',
@@ -390,7 +660,7 @@ export function TechniquesView({
         </div>
       )}
 
-      {/* Technique 3: Interactive Concept Mind Map */}
+      {/* Technique 3: Structural Lecture Mind Map (100% Non-AI) */}
       {activeTechnique === 'mindmap' && (
         <div className="flex-1 flex min-h-0 overflow-hidden">
           {!doc ? (
@@ -401,7 +671,6 @@ export function TechniquesView({
             <>
               <div className="flex-1 overflow-auto p-8 lg:p-12">
                 <div className="max-w-4xl mx-auto">
-                  {/* Root Node */}
                   <div className="flex justify-center mb-8">
                     <div
                       className="rounded-2xl border-2 px-6 py-3.5 shadow-sm text-center max-w-md"
@@ -411,7 +680,7 @@ export function TechniquesView({
                       }}
                     >
                       <div className="font-mono-tech text-[10px] uppercase tracking-wider" style={{ color: 'var(--accent)' }}>
-                        Central Lecture Concept
+                        Central Lecture Structure
                       </div>
                       <div className="font-editorial text-xl font-medium mt-0.5" dir="auto">
                         {doc.title}
@@ -419,12 +688,11 @@ export function TechniquesView({
                     </div>
                   </div>
 
-                  {/* Page Branches & Chunk Leaf Nodes */}
                   <div className="grid md:grid-cols-2 gap-6">
                     {mindMapGroups.map(([pageNumber, chunks]) => (
                       <div
                         key={pageNumber}
-                        className="rounded-3xl border p-5 space-y-3 relative"
+                        className="rounded-3xl border p-5 space-y-3"
                         style={{
                           backgroundColor: 'var(--bg-surface)',
                           borderColor: 'var(--border-subtle)',
@@ -435,7 +703,7 @@ export function TechniquesView({
                             className="font-mono-tech text-[11px] font-semibold px-2.5 py-0.5 rounded-full"
                             style={{ backgroundColor: 'var(--accent-soft)', color: 'var(--accent)' }}
                           >
-                            Branch · Page {pageNumber}
+                            Page {pageNumber}
                           </span>
                           <span className="text-[11px]" style={{ color: 'var(--ink-muted)' }}>
                             {chunks.length} nodes
@@ -445,6 +713,7 @@ export function TechniquesView({
                         <div className="space-y-2 pl-3 border-l-2" style={{ borderColor: 'var(--border-strong)' }}>
                           {chunks.map((c) => {
                             const selected = selectedMapChunk?.id === c.id;
+                            const hasNote = notedChunkIds.has(c.id);
                             return (
                               <button
                                 key={c.id}
@@ -456,8 +725,17 @@ export function TechniquesView({
                                   borderColor: selected ? 'var(--accent-border)' : 'var(--border-subtle)',
                                 }}
                               >
-                                <div className="text-xs font-medium line-clamp-1" dir="auto">
-                                  {c.heading || `Passage #${c.chunkIndex}`}
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="text-xs font-medium line-clamp-1" dir="auto">
+                                    {c.heading || `Passage #${c.chunkIndex}`}
+                                  </span>
+                                  {hasNote && (
+                                    <span
+                                      className="h-2 w-2 rounded-full shrink-0"
+                                      style={{ backgroundColor: 'var(--sage)' }}
+                                      title="You have notes on this passage"
+                                    />
+                                  )}
                                 </div>
                                 <div
                                   className="text-[11px] line-clamp-1 mt-0.5"
@@ -476,7 +754,6 @@ export function TechniquesView({
                 </div>
               </div>
 
-              {/* Right Node Inspector */}
               {selectedMapChunk && (
                 <aside
                   className="w-80 shrink-0 border-l p-5 overflow-y-auto space-y-4"
@@ -501,7 +778,7 @@ export function TechniquesView({
                     style={{ backgroundColor: 'var(--accent)' }}
                   >
                     <ExternalLink className="h-3.5 w-3.5" />
-                    Open in Read & Explain
+                    Open in Study Reader
                   </button>
                 </aside>
               )}
@@ -510,108 +787,207 @@ export function TechniquesView({
         </div>
       )}
 
-      {/* Technique 4: Interactive Flashcards */}
+      {/* Technique 4: Manual Flashcards + Notes Deck (100% Non-AI) */}
       {activeTechnique === 'flashcards' && (
-        <div className="flex-1 overflow-y-auto px-6 py-10 flex flex-col items-center justify-center">
-          {!currentCard ? (
-            <div className="text-center text-xs" style={{ color: 'var(--ink-muted)' }}>
-              Import a lecture or save notes to build your flashcard deck automatically.
-            </div>
-          ) : (
-            <div className="w-full max-w-xl space-y-5">
-              <div className="flex items-center justify-between text-xs" style={{ color: 'var(--ink-muted)' }}>
-                <span>
-                  Card {cardIndex + 1} of {flashcardDeck.length} · {currentCard.origin}
-                </span>
-                <span>{masteredCardIds.size} mastered this session</span>
+        <div className="flex-1 overflow-y-auto px-6 py-10 flex flex-col items-center">
+          <div className="w-full max-w-xl space-y-5">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h2 className="font-editorial text-2xl font-medium">Flashcards</h2>
+                <p className="text-xs" style={{ color: 'var(--ink-muted)' }}>
+                  Built from your own flashcards, glossary terms, highlights, and lecture notes
+                </p>
               </div>
+              {doc && (
+                <button
+                  type="button"
+                  onClick={() => setShowCardBuilder((v) => !v)}
+                  className="inline-flex items-center gap-1 rounded-xl px-3.5 py-2 text-xs font-medium text-white cursor-pointer"
+                  style={{ backgroundColor: 'var(--accent)' }}
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  New Card
+                </button>
+              )}
+            </div>
 
-              <div
-                onClick={() => setFlipped((v) => !v)}
-                className="min-h-[290px] rounded-3xl border p-8 flex flex-col justify-between cursor-pointer transition shadow-sm"
+            {showCardBuilder && doc && (
+              <form
+                onSubmit={handleCreateCard}
+                className="rounded-2xl border p-4 space-y-3"
                 style={{
                   backgroundColor: 'var(--bg-surface)',
-                  borderColor: flipped ? 'var(--accent-border)' : 'var(--border-subtle)',
+                  borderColor: 'var(--accent-border)',
                 }}
               >
-                <div className="flex items-center justify-between text-[11px]">
-                  <span
-                    className="font-mono-tech px-2 py-0.5 rounded-full"
-                    style={{
-                      backgroundColor: flipped ? 'var(--sage-soft)' : 'var(--accent-soft)',
-                      color: flipped ? 'var(--sage)' : 'var(--accent)',
-                    }}
+                <select
+                  value={cardChunkId}
+                  onChange={(e) => setCardChunkId(e.target.value)}
+                  className="w-full rounded-xl border px-3 py-1.5 text-xs focus:outline-none"
+                  style={{
+                    backgroundColor: 'var(--bg-canvas)',
+                    borderColor: 'var(--border-subtle)',
+                    color: 'var(--ink-primary)',
+                  }}
+                >
+                  {doc.chunks.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      Anchor: Page {c.pageNumber} · #{c.chunkIndex}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  type="text"
+                  required
+                  dir="auto"
+                  value={cardFront}
+                  onChange={(e) => setCardFront(e.target.value)}
+                  placeholder="Front (Question or Technical Term)"
+                  className="w-full rounded-xl border px-3 py-2 text-xs font-medium focus:outline-none"
+                  style={{
+                    backgroundColor: 'var(--bg-canvas)',
+                    borderColor: 'var(--border-subtle)',
+                    color: 'var(--ink-primary)',
+                  }}
+                />
+                <textarea
+                  rows={3}
+                  required
+                  dir="auto"
+                  value={cardBack}
+                  onChange={(e) => setCardBack(e.target.value)}
+                  placeholder="Back (Your explanation / answer)"
+                  className="w-full rounded-xl border p-3 text-xs focus:outline-none"
+                  style={{
+                    backgroundColor: 'var(--bg-canvas)',
+                    borderColor: 'var(--border-subtle)',
+                    color: 'var(--ink-primary)',
+                  }}
+                />
+                <div className="flex justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowCardBuilder(false)}
+                    className="px-3 py-1.5 text-xs cursor-pointer"
+                    style={{ color: 'var(--ink-muted)' }}
                   >
-                    {flipped ? 'Answer / Explanation' : 'Prompt — Click to Flip'}
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={savingCard}
+                    className="rounded-xl px-4 py-1.5 text-xs font-medium text-white cursor-pointer"
+                    style={{ backgroundColor: 'var(--sage)' }}
+                  >
+                    {savingCard ? 'Saving...' : 'Add to Deck'}
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {!currentCard ? (
+              <div
+                className="rounded-3xl border border-dashed p-10 text-center text-xs"
+                style={{ borderColor: 'var(--border-strong)', color: 'var(--ink-muted)' }}
+              >
+                Add a flashcard above or save notes & highlights while reading to populate your deck.
+              </div>
+            ) : (
+              <>
+                <div className="flex items-center justify-between text-xs" style={{ color: 'var(--ink-muted)' }}>
+                  <span>
+                    Card {cardIndex + 1} of {flashcardDeck.length} · {currentCard.origin}
                   </span>
-                  <span className="font-mono-tech" style={{ color: 'var(--ink-muted)' }}>
-                    Page {currentCard.pageNumber}
-                  </span>
+                  <span>{masteredCardIds.size} mastered this session</span>
                 </div>
 
                 <div
-                  dir={currentCard.isRtl ? 'rtl' : 'auto'}
-                  className={
-                    flipped
-                      ? 'text-sm leading-relaxed whitespace-pre-wrap my-6 max-h-56 overflow-y-auto'
-                      : 'font-editorial text-2xl font-medium text-center my-8'
-                  }
-                >
-                  {flipped ? currentCard.back : currentCard.front}
-                </div>
-
-                <div className="flex items-center justify-between text-[11px]" style={{ color: 'var(--ink-muted)' }}>
-                  <span className="inline-flex items-center gap-1">
-                    <RotateCcw className="h-3 w-3" />
-                    Tap card to flip
-                  </span>
-                  {currentCard.chunkId && (
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onJumpToChunkInReader(currentCard.chunkId!, currentCard.pageNumber);
-                      }}
-                      className="underline font-medium cursor-pointer"
-                      style={{ color: 'var(--accent)' }}
-                    >
-                      Check Source p.{currentCard.pageNumber}
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              <div className="flex items-center justify-between gap-3">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setFlipped(false);
-                    setCardIndex((i) => (i - 1 + flashcardDeck.length) % flashcardDeck.length);
-                  }}
-                  className="rounded-xl border px-4 py-2 text-xs font-medium cursor-pointer"
+                  onClick={() => setFlipped((v) => !v)}
+                  className="min-h-[270px] rounded-3xl border p-8 flex flex-col justify-between cursor-pointer transition shadow-sm"
                   style={{
                     backgroundColor: 'var(--bg-surface)',
-                    borderColor: 'var(--border-subtle)',
+                    borderColor: flipped ? 'var(--accent-border)' : 'var(--border-subtle)',
                   }}
                 >
-                  ← Previous
-                </button>
+                  <div className="flex items-center justify-between text-[11px]">
+                    <span
+                      className="font-mono-tech px-2 py-0.5 rounded-full"
+                      style={{
+                        backgroundColor: flipped ? 'var(--sage-soft)' : 'var(--accent-soft)',
+                        color: flipped ? 'var(--sage)' : 'var(--accent)',
+                      }}
+                    >
+                      {flipped ? 'Answer' : 'Prompt — Click to Flip'}
+                    </span>
+                    <span className="font-mono-tech" style={{ color: 'var(--ink-muted)' }}>
+                      Page {currentCard.pageNumber}
+                    </span>
+                  </div>
 
-                <button
-                  type="button"
-                  onClick={() => {
-                    setMasteredCardIds((prev) => new Set(prev).add(currentCard.id));
-                    setFlipped(false);
-                    setCardIndex((i) => (i + 1) % flashcardDeck.length);
-                  }}
-                  className="rounded-xl px-5 py-2 text-xs font-medium text-white cursor-pointer"
-                  style={{ backgroundColor: 'var(--sage)' }}
-                >
-                  Got It · Next →
-                </button>
-              </div>
-            </div>
-          )}
+                  <div
+                    dir={currentCard.isRtl ? 'rtl' : 'auto'}
+                    className={
+                      flipped
+                        ? 'text-sm leading-relaxed whitespace-pre-wrap my-6 max-h-56 overflow-y-auto'
+                        : 'font-editorial text-2xl font-medium text-center my-8'
+                    }
+                  >
+                    {flipped ? currentCard.back : currentCard.front}
+                  </div>
+
+                  <div className="flex items-center justify-between text-[11px]" style={{ color: 'var(--ink-muted)' }}>
+                    <span className="inline-flex items-center gap-1">
+                      <RotateCcw className="h-3 w-3" />
+                      Tap card to flip
+                    </span>
+                    {currentCard.chunkId && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onJumpToChunkInReader(currentCard.chunkId!, currentCard.pageNumber);
+                        }}
+                        className="underline font-medium cursor-pointer"
+                        style={{ color: 'var(--accent)' }}
+                      >
+                        Check Source p.{currentCard.pageNumber}
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between gap-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFlipped(false);
+                      setCardIndex((i) => (i - 1 + flashcardDeck.length) % flashcardDeck.length);
+                    }}
+                    className="rounded-xl border px-4 py-2 text-xs font-medium cursor-pointer"
+                    style={{
+                      backgroundColor: 'var(--bg-surface)',
+                      borderColor: 'var(--border-subtle)',
+                    }}
+                  >
+                    ← Previous
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMasteredCardIds((prev) => new Set(prev).add(currentCard.id));
+                      setFlipped(false);
+                      setCardIndex((i) => (i + 1) % flashcardDeck.length);
+                    }}
+                    className="rounded-xl px-5 py-2 text-xs font-medium text-white cursor-pointer"
+                    style={{ backgroundColor: 'var(--sage)' }}
+                  >
+                    Got It · Next →
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
         </div>
       )}
     </div>
