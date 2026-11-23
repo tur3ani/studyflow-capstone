@@ -22,6 +22,7 @@ import type {
   StudySessionDto,
 } from '../types/models';
 import { ActiveRecallView } from './ActiveRecallView';
+import { ConstellationBrain } from './ConstellationBrain';
 
 type TechniqueKind = 'recall' | 'quizzes' | 'mindmap' | 'flashcards';
 
@@ -669,8 +670,11 @@ export function TechniquesView({
             </div>
           ) : (
             <>
-              <div className="flex-1 overflow-auto p-8 lg:p-12">
-                <div className="max-w-4xl mx-auto">
+              <div className="flex-1 overflow-auto p-8 lg:p-12 relative">
+                <div className="absolute inset-0 pointer-events-none opacity-65">
+                  <ConstellationBrain variant="ambient" />
+                </div>
+                <div className="max-w-4xl mx-auto relative z-10">
                   <div className="flex justify-center mb-8">
                     <div
                       className="rounded-2xl border-2 px-6 py-3.5 shadow-sm text-center max-w-md"

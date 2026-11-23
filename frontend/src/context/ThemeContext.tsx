@@ -7,13 +7,13 @@ interface ThemeContextValue {
   toggleTheme: () => void;
 }
 
-const THEME_KEY = 'studyflow_theme_mode';
+const THEME_KEY = 'studyflow_theme_mode_v2';
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setTheme] = useState<ThemeMode>(() => {
     const saved = localStorage.getItem(THEME_KEY);
-    return saved === 'dark' ? 'dark' : 'light';
+    return saved === 'light' ? 'light' : 'dark';
   });
 
   useEffect(() => {

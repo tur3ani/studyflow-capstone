@@ -1,63 +1,65 @@
 @import "tailwindcss";
 
 :root {
-  --bg-canvas: #fbf9f5;
-  --bg-sidebar: #f4f0e8;
+  /* Editorial Light Mode (Harmonized with Electric Iris, Saffron Spark & Deep Verdant) */
+  --bg-canvas: #faf9f6;
+  --bg-sidebar: #f3f1ec;
   --bg-surface: #ffffff;
-  --bg-elevated: #f8f5ef;
-  --bg-hover: #eee9df;
-  --border-subtle: #e7e1d6;
-  --border-strong: #d6cec0;
+  --bg-elevated: #f6f4ef;
+  --bg-hover: #ece9e1;
+  --border-subtle: rgba(24, 24, 27, 0.09);
+  --border-strong: rgba(24, 24, 27, 0.18);
 
-  --ink-primary: #1c1917;
-  --ink-secondary: #57534e;
-  --ink-muted: #8c857b;
+  --ink-primary: #0c0c0e;
+  --ink-secondary: #52525b;
+  --ink-muted: #71717a;
 
-  --accent: #2c4a7c;
-  --accent-hover: #213a63;
-  --accent-soft: #eaf0f8;
-  --accent-border: #c5d5ec;
+  --accent: #7444ff;
+  --accent-hover: #5f2ee6;
+  --accent-soft: rgba(116, 68, 255, 0.1);
+  --accent-border: rgba(116, 68, 255, 0.28);
 
-  --warm: #b45309;
-  --warm-soft: #fef3c7;
-  --warm-border: #f3d28c;
+  --warm: #c97a00;
+  --warm-soft: rgba(255, 184, 41, 0.16);
+  --warm-border: rgba(201, 122, 0, 0.34);
 
-  --sage: #15803d;
-  --sage-soft: #e7f6ec;
-  --sage-border: #b8e3c7;
+  --sage: #15846e;
+  --sage-soft: rgba(21, 132, 110, 0.12);
+  --sage-border: rgba(21, 132, 110, 0.34);
 
-  --danger: #b91c1c;
-  --danger-soft: #fee2e2;
+  --danger: #dc2626;
+  --danger-soft: rgba(220, 38, 38, 0.1);
 }
 
 .dark {
-  --bg-canvas: #141312;
-  --bg-sidebar: #191715;
-  --bg-surface: #1e1c19;
-  --bg-elevated: #25221f;
-  --bg-hover: #2c2824;
-  --border-subtle: #2f2b26;
-  --border-strong: #413c35;
+  /* Constellation on Black Velvet — Signature Dark Void Palette */
+  --bg-canvas: #000000;
+  --bg-sidebar: #050507;
+  --bg-surface: #0a0a0e;
+  --bg-elevated: #111117;
+  --bg-hover: #181822;
+  --border-subtle: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.17);
 
-  --ink-primary: #f4f0e8;
-  --ink-secondary: #b7afa3;
-  --ink-muted: #7d766d;
+  --ink-primary: #ffffff;
+  --ink-secondary: #bdbdbd;
+  --ink-muted: #9a9a9a;
 
-  --accent: #6c9be0;
-  --accent-hover: #83aee9;
-  --accent-soft: rgba(108, 155, 224, 0.14);
-  --accent-border: rgba(108, 155, 224, 0.34);
+  --accent: #8052ff;
+  --accent-hover: #6e3ef5;
+  --accent-soft: rgba(128, 82, 255, 0.15);
+  --accent-border: rgba(128, 82, 255, 0.4);
 
-  --warm: #f59e0b;
-  --warm-soft: rgba(245, 158, 11, 0.14);
-  --warm-border: rgba(245, 158, 11, 0.35);
+  --warm: #ffb829;
+  --warm-soft: rgba(255, 184, 41, 0.13);
+  --warm-border: rgba(255, 184, 41, 0.35);
 
-  --sage: #34d399;
-  --sage-soft: rgba(52, 211, 153, 0.14);
-  --sage-border: rgba(52, 211, 153, 0.32);
+  --sage: #1fb899;
+  --sage-soft: rgba(21, 132, 110, 0.22);
+  --sage-border: rgba(31, 184, 153, 0.38);
 
-  --danger: #f87171;
-  --danger-soft: rgba(248, 113, 113, 0.14);
+  --danger: #ff6b6b;
+  --danger-soft: rgba(255, 107, 107, 0.14);
 }
 
 @layer base {
@@ -65,8 +67,9 @@
   body {
     background-color: var(--bg-canvas);
     color: var(--ink-primary);
-    font-family: 'Inter', 'IBM Plex Sans Arabic', system-ui, -apple-system, sans-serif;
-    transition: background-color 180ms ease, color 180ms ease;
+    font-family: 'Inter', 'IBM Plex Sans Arabic', ui-sans-serif, system-ui, -apple-system, sans-serif;
+    font-feature-settings: 'ss01' on;
+    transition: background-color 200ms ease, color 200ms ease;
   }
 
   [dir="rtl"] {
@@ -74,8 +77,42 @@
   }
 }
 
+/* Sculptural Weight-400 Display Typography (scale + tight negative tracking, never heavy bold) */
 .font-editorial {
-  font-family: 'Newsreader', 'IBM Plex Sans Arabic', Georgia, serif;
+  font-family: 'Inter', 'IBM Plex Sans Arabic', ui-sans-serif, system-ui, sans-serif;
+  font-weight: 400;
+  letter-spacing: -0.04em;
+  line-height: 1.08;
+  font-feature-settings: 'ss01' on;
+}
+
+/* Signature ultra-light airy body copy */
+.text-airy {
+  font-weight: 200;
+  line-height: 1.6;
+}
+
+/* Saffron Spark uppercase section eyebrow */
+.eyebrow-spark {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--warm);
+}
+
+/* Singular Electric Iris pill primary CTA (flat, zero shadow) */
+.btn-iris {
+  background-color: var(--accent);
+  color: #ffffff;
+  border-radius: 9999px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  transition: background-color 150ms ease, opacity 150ms ease;
+}
+
+.btn-iris:hover:not(:disabled) {
+  background-color: var(--accent-hover);
 }
 
 .font-mono-tech {
@@ -84,13 +121,13 @@
 
 @keyframes citationPulse {
   0% {
-    box-shadow: 0 0 0 0 rgba(180, 83, 9, 0.45);
+    box-shadow: 0 0 0 0 rgba(255, 184, 41, 0.55);
   }
   70% {
-    box-shadow: 0 0 0 10px rgba(180, 83, 9, 0);
+    box-shadow: 0 0 0 12px rgba(255, 184, 41, 0);
   }
   100% {
-    box-shadow: 0 0 0 0 rgba(180, 83, 9, 0);
+    box-shadow: 0 0 0 0 rgba(255, 184, 41, 0);
   }
 }
 
@@ -99,8 +136,8 @@
 }
 
 ::-webkit-scrollbar {
-  width: 7px;
-  height: 7px;
+  width: 6px;
+  height: 6px;
 }
 
 ::-webkit-scrollbar-track {
