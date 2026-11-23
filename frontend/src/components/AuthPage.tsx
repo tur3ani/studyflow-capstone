@@ -77,23 +77,24 @@ export function AuthPage() {
             style={{
               backgroundColor: 'var(--bg-surface)',
               borderColor: 'var(--border-subtle)',
-              color: 'var(--warm)',
+              color: 'var(--sage)',
             }}
           >
             <Sparkles className="h-3.5 w-3.5" />
-            Calm, Source-Grounded Bilingual Studying
+            Human-First Study Pipeline · Optional AI Companion
           </div>
 
           <h1 className="font-editorial text-4xl lg:text-5xl leading-[1.12] font-medium tracking-tight">
-            Read deeply. Explain in Arabic. Remember independently.
+            Read deeply. Annotate clearly. Remember independently.
           </h1>
 
           <p
             className="mt-5 text-sm lg:text-base leading-relaxed"
             style={{ color: 'var(--ink-secondary)' }}
           >
-            Turn dense lecture PDFs into structured passages, keep English technical terms intact
-            inside Arabic explanations, and move gradually from AI guidance to active recall.
+            Study entire lecture PDFs with highlights, margin notes, personal glossaries, active
+            recall, and self-authored quizzes — completely without AI, or opt in to AI helpers only
+            when you want them.
           </p>
 
           <div className="mt-10 grid sm:grid-cols-2 gap-4">

@@ -1,12 +1,13 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import { api, getStoredToken, setStoredToken } from '../api/client';
-import type { UserDto } from '../types/models';
+import type { UpdateProfileRequest, UserDto } from '../types/models';
 
 interface AuthContextValue {
   user: UserDto | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<void>;
   register: (email: string, displayName: string, password: string) => Promise<void>;
+  updateProfile: (payload: UpdateProfileRequest) => Promise<UserDto>;
   logout: () => void;
 }
 
@@ -50,13 +51,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(res.user);
   };
 
+  const updateProfile = async (payload: UpdateProfileRequest) => {
+    const updated = await api.updateProfile(payload);
+    setUser(updated);
+    return updated;
+  };
+
   const logout = () => {
     setStoredToken(null);
     setUser(null);
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, register, logout }}>
+    <AuthContext.Provider value={{ user, loading, login, register, updateProfile, logout }}>
       {children}
     </AuthContext.Provider>
   );

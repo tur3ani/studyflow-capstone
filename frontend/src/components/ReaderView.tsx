@@ -1,17 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
+  Bookmark,
   BookmarkCheck,
   Check,
   Copy,
   ExternalLink,
   FileSearch,
   GripVertical,
-  Languages,
+  Highlighter,
   Loader2,
   Maximize2,
   Minimize2,
   NotebookPen,
+  PenLine,
   Plus,
   Save,
   Sparkles,
@@ -20,6 +22,7 @@ import {
   X,
 } from 'lucide-react';
 import { api } from '../api/client';
+import { useAiPreferences } from '../context/AiPreferencesContext';
 import type {
   DocumentChunkDto,
   DocumentDetailDto,
@@ -33,8 +36,10 @@ export type ReaderSplitMode = 'none' | 'notes' | 'pdf';
 
 interface GlossaryEntry {
   term: string;
+  definition?: string;
   chunkId: string;
   pageNumber: number;
+  fromAi?: boolean;
 }
 
 interface FloatingSelection {
@@ -43,6 +48,8 @@ interface FloatingSelection {
   x: number;
   y: number;
 }
+
+type InlineManualKind = 'Manual' | 'StoryMode' | 'GlossaryTerm';
 
 interface ReaderViewProps {
   document: DocumentDetailDto | null;
@@ -58,7 +65,7 @@ interface ReaderViewProps {
   onChangeSplitMode: (mode: ReaderSplitMode, page?: number) => void;
   onOpenPdfAtPage: (pageNumber: number) => void;
   onTriggerUpload: () => void;
-  onSaveExplanationAsNote: (payload: {
+  onSaveNote: (payload: {
     chunk: DocumentChunkDto;
     title: string;
     contentMarkdown: string;
@@ -86,41 +93,47 @@ export function ReaderView({
   onChangeSplitMode,
   onOpenPdfAtPage,
   onTriggerUpload,
-  onSaveExplanationAsNote,
+  onSaveNote,
   onUpdateNote,
   onDeleteNote,
   onJumpToChunk,
   onNotify,
 }: ReaderViewProps) {
+  const { canUseAiExplain } = useAiPreferences();
+
   const [selectedPageFilter, setSelectedPageFilter] = useState<number | 'all'>('all');
 
-  // Cached PDF Blob per document + fresh object URL per page jump so Chrome/Edge ALWAYS starts on the exact pressed page!
+  // Cached PDF Blob per document + fresh object URL per page jump so PDF ALWAYS starts on pressed page
   const pdfBlobRef = useRef<{ docId: string; blob: Blob } | null>(null);
   const [pdfIframeSrc, setPdfIframeSrc] = useState<string | null>(null);
   const [pdfRenderNonce, setPdfRenderNonce] = useState(0);
   const [pdfLoading, setPdfLoading] = useState(false);
   const [pdfError, setPdfError] = useState<string | null>(null);
 
-  // Resizable right split pane width (shared cleanly by Split Notes & Split PDF)
+  // Resizable right split pane width
   const [splitPercent, setSplitPercent] = useState(44);
   const splitContainerRef = useRef<HTMLDivElement>(null);
   const draggingRef = useRef(false);
 
-  // Inline AI Explanation Workbench
+  // --- NON-AI INLINE ANNOTATION COMPOSER (Manual Note / 1-Line Summary / Glossary Term) ---
+  const [manualComposeChunkId, setManualComposeChunkId] = useState<string | null>(null);
+  const [manualKind, setManualKind] = useState<InlineManualKind>('Manual');
+  const [manualTitle, setManualTitle] = useState('');
+  const [manualBody, setManualBody] = useState('');
+  const [savingManual, setSavingManual] = useState(false);
+
+  // --- OPTIONAL AI EXPLANATION DRAWER (Only active if user opted into AI Explanations) ---
   const [activeExplainChunkId, setActiveExplainChunkId] = useState<string | null>(null);
   const [explainLanguage, setExplainLanguage] = useState<'ar' | 'en'>('ar');
   const [explainMode, setExplainMode] = useState<ExplainChunkRequest['mode']>('explain_concept');
   const [explainTerm, setExplainTerm] = useState('');
   const [explaining, setExplaining] = useState(false);
   const [explanationResult, setExplanationResult] = useState<ExplainChunkResponse | null>(null);
-  const [explainedChunkIds, setExplainedChunkIds] = useState<Set<string>>(() => new Set());
-  const [glossary, setGlossary] = useState<GlossaryEntry[]>([]);
-
-  // Inline explanation draft state (separate from saving)
+  const [aiGlossary, setAiGlossary] = useState<GlossaryEntry[]>([]);
   const [draftTitle, setDraftTitle] = useState('');
   const [draftContent, setDraftContent] = useState('');
   const [savingDraft, setSavingDraft] = useState(false);
-  const [justSaved, setJustSaved] = useState(false);
+  const [justSavedAi, setJustSavedAi] = useState(false);
 
   // Split Notes Pane quick-create & inline edit state
   const [showQuickNote, setShowQuickNote] = useState(false);
@@ -130,14 +143,24 @@ export function ReaderView({
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
   const [editNoteTitle, setEditNoteTitle] = useState('');
   const [editNoteBody, setEditNoteBody] = useState('');
+  const [notesFilter, setNotesFilter] = useState<'all' | 'highlights' | 'glossary'>('all');
 
   // Floating text-selection popover
   const [floatingSel, setFloatingSel] = useState<FloatingSelection | null>(null);
 
   const chunkRefs = useRef<Record<string, HTMLElement | null>>({});
 
+  // Close AI explanation panel immediately if user opts out of AI mid-session
+  useEffect(() => {
+    if (!canUseAiExplain) {
+      setActiveExplainChunkId(null);
+      setExplanationResult(null);
+    }
+  }, [canUseAiExplain]);
+
   useEffect(() => {
     setSelectedPageFilter('all');
+    setManualComposeChunkId(null);
     setActiveExplainChunkId(null);
     setExplanationResult(null);
     setFloatingSel(null);
@@ -160,9 +183,7 @@ export function ReaderView({
 
   // Load PDF blob once per document and generate a fresh object URL with #page=N every time pdfViewPage changes
   useEffect(() => {
-    if (!doc || splitMode !== 'pdf') {
-      return;
-    }
+    if (!doc || splitMode !== 'pdf') return;
 
     if (!doc.originalFileName.toLowerCase().endsWith('.pdf')) {
       setPdfError('Original embedded preview is only available for PDF files.');
@@ -205,9 +226,7 @@ export function ReaderView({
 
     return () => {
       cancelled = true;
-      if (createdObjectUrl) {
-        URL.revokeObjectURL(createdObjectUrl);
-      }
+      if (createdObjectUrl) URL.revokeObjectURL(createdObjectUrl);
     };
   }, [doc?.id, doc?.originalFileName, splitMode, pdfViewPage]);
 
@@ -231,7 +250,6 @@ export function ReaderView({
     };
   }, []);
 
-  // Dismiss floating selection toolbar on outside click
   useEffect(() => {
     const onMouseDown = (e: MouseEvent) => {
       const target = e.target as HTMLElement | null;
@@ -243,6 +261,52 @@ export function ReaderView({
     return () => window.removeEventListener('mousedown', onMouseDown);
   }, []);
 
+  // --- Non-AI Actions ---
+  const openManualComposer = (
+    chunk: DocumentChunkDto,
+    kind: InlineManualKind = 'Manual',
+    prefillTermOrQuote?: string
+  ) => {
+    onSelectChunk(chunk);
+    setActiveExplainChunkId(null);
+    setManualComposeChunkId(chunk.id);
+    setManualKind(kind);
+    setFloatingSel(null);
+
+    if (kind === 'GlossaryTerm') {
+      setManualTitle(prefillTermOrQuote ?? '');
+      setManualBody('');
+    } else if (kind === 'StoryMode') {
+      setManualTitle(`1-Line Summary · Page ${chunk.pageNumber}`);
+      setManualBody('');
+    } else {
+      setManualTitle(
+        prefillTermOrQuote
+          ? `${prefillTermOrQuote.slice(0, 48)} (p.${chunk.pageNumber})`
+          : `${chunk.heading || `Page ${chunk.pageNumber}`} — Note`
+      );
+      setManualBody(prefillTermOrQuote ? `> "${prefillTermOrQuote}"\n\n` : '');
+    }
+  };
+
+  const handleQuickHighlight = async (chunk: DocumentChunkDto, selectedQuote?: string) => {
+    setFloatingSel(null);
+    const quoteText = selectedQuote?.trim() || chunk.content.slice(0, 260).trim();
+    const title = selectedQuote
+      ? `Highlight: ${selectedQuote.slice(0, 48)}`
+      : `Highlight · ${chunk.heading || `Page ${chunk.pageNumber}`}`;
+
+    await onSaveNote({
+      chunk,
+      title,
+      contentMarkdown: `> ${quoteText}`,
+      sourcePageNumber: chunk.pageNumber,
+      language: /[\u0600-\u06FF]/.test(quoteText) ? 'ar' : 'en',
+      sourceType: 'Highlight',
+    });
+  };
+
+  // --- Optional AI Explanation Action ---
   const runExplain = useCallback(
     async (
       chunk: DocumentChunkDto,
@@ -251,12 +315,13 @@ export function ReaderView({
       term?: string
     ) => {
       onSelectChunk(chunk);
+      setManualComposeChunkId(null);
       setActiveExplainChunkId(chunk.id);
       setExplainLanguage(lang);
       setExplainMode(mode);
       setExplainTerm(term ?? '');
       setExplaining(true);
-      setJustSaved(false);
+      setJustSavedAi(false);
       setFloatingSel(null);
 
       try {
@@ -268,23 +333,27 @@ export function ReaderView({
         setExplanationResult(res);
         setDraftTitle(res.suggestedNoteTitle);
         setDraftContent(res.explanation);
-        setExplainedChunkIds((prev) => new Set(prev).add(chunk.id));
 
         if (res.keyTerms.length > 0) {
-          setGlossary((prev) => {
+          setAiGlossary((prev) => {
             const existing = new Set(prev.map((g) => g.term.toLowerCase()));
             const additions: GlossaryEntry[] = [];
             for (const t of res.keyTerms) {
               if (!existing.has(t.toLowerCase())) {
                 existing.add(t.toLowerCase());
-                additions.push({ term: t, chunkId: chunk.id, pageNumber: chunk.pageNumber });
+                additions.push({
+                  term: t,
+                  chunkId: chunk.id,
+                  pageNumber: chunk.pageNumber,
+                  fromAi: true,
+                });
               }
             }
-            return [...additions, ...prev].slice(0, 16);
+            return [...additions, ...prev].slice(0, 12);
           });
         }
       } catch (err) {
-        onNotify(err instanceof Error ? err.message : 'Explanation failed.');
+        onNotify(err instanceof Error ? err.message : 'Optional AI explanation failed.');
       } finally {
         setExplaining(false);
       }
@@ -302,10 +371,56 @@ export function ReaderView({
     [notes, doc]
   );
 
-  const notedChunkIds = useMemo(
-    () => new Set(docNotes.filter((n) => n.chunkId).map((n) => n.chunkId!)),
+  const filteredSplitNotes = useMemo(() => {
+    if (notesFilter === 'highlights') return docNotes.filter((n) => n.sourceType === 'Highlight');
+    if (notesFilter === 'glossary') return docNotes.filter((n) => n.sourceType === 'GlossaryTerm');
+    return docNotes;
+  }, [docNotes, notesFilter]);
+
+  const highlightedChunkIds = useMemo(
+    () =>
+      new Set(
+        docNotes
+          .filter((n) => n.sourceType === 'Highlight' && n.chunkId)
+          .map((n) => n.chunkId!)
+      ),
     [docNotes]
   );
+
+  const notedChunkIds = useMemo(
+    () =>
+      new Set(
+        docNotes
+          .filter((n) => n.sourceType !== 'Highlight' && n.chunkId)
+          .map((n) => n.chunkId!)
+      ),
+    [docNotes]
+  );
+
+  // Glossary Ribbon combines persisted student-authored GlossaryTerm notes (100% Non-AI) + optional AI terms
+  const glossaryEntries = useMemo<GlossaryEntry[]>(() => {
+    const manualTerms: GlossaryEntry[] = docNotes
+      .filter((n) => n.sourceType === 'GlossaryTerm' && n.chunkId)
+      .map((n) => ({
+        term: n.title,
+        definition: n.contentMarkdown,
+        chunkId: n.chunkId!,
+        pageNumber: n.sourcePageNumber ?? 1,
+        fromAi: false,
+      }));
+
+    if (!canUseAiExplain) return manualTerms;
+
+    const seen = new Set(manualTerms.map((g) => g.term.toLowerCase()));
+    const combined = [...manualTerms];
+    for (const item of aiGlossary) {
+      if (!seen.has(item.term.toLowerCase())) {
+        seen.add(item.term.toLowerCase());
+        combined.push(item);
+      }
+    }
+    return combined;
+  }, [docNotes, aiGlossary, canUseAiExplain]);
 
   const recalledChunkIds = useMemo(() => {
     const set = new Set<string>();
@@ -329,33 +444,33 @@ export function ReaderView({
       : doc.chunks.filter((c) => c.pageNumber === selectedPageFilter);
   }, [doc, selectedPageFilter]);
 
-  const masteryStats = useMemo(() => {
+  const studyStats = useMemo(() => {
     const total = doc?.chunks.length ?? 0;
-    const independent = recalledChunkIds.size;
-    const captured = notedChunkIds.size;
-    const guided = explainedChunkIds.size;
-    const touched = new Set([...recalledChunkIds, ...notedChunkIds, ...explainedChunkIds]).size;
+    const highlighted = highlightedChunkIds.size;
+    const noted = notedChunkIds.size;
+    const recalled = recalledChunkIds.size;
+    const touched = new Set([...highlightedChunkIds, ...notedChunkIds, ...recalledChunkIds]).size;
     return {
       total,
-      independent,
-      captured,
-      guided,
+      highlighted,
+      noted,
+      recalled,
       pct: total > 0 ? Math.round((touched / total) * 100) : 0,
     };
-  }, [doc?.chunks.length, recalledChunkIds, notedChunkIds, explainedChunkIds]);
+  }, [doc?.chunks.length, highlightedChunkIds, notedChunkIds, recalledChunkIds]);
 
   const handlePassageMouseUp = (chunk: DocumentChunkDto) => {
     const sel = window.getSelection();
     const text = sel?.toString().trim();
-    if (!sel || !text || text.length < 2 || text.length > 90) return;
+    if (!sel || !text || text.length < 2 || text.length > 140) return;
     const rect = sel.getRangeAt(0).getBoundingClientRect();
     if (rect.width === 0 && rect.height === 0) return;
 
     setFloatingSel({
       text,
       chunk,
-      x: Math.min(window.innerWidth - 220, Math.max(24, rect.left + rect.width / 2)),
-      y: Math.max(64, rect.top - 48),
+      x: Math.min(window.innerWidth - 260, Math.max(24, rect.left + rect.width / 2)),
+      y: Math.max(64, rect.top - 50),
     });
   };
 
@@ -374,8 +489,8 @@ export function ReaderView({
         </div>
         <h2 className="font-editorial text-2xl font-medium">No lecture open yet</h2>
         <p className="text-xs mt-2 max-w-md leading-relaxed" style={{ color: 'var(--ink-secondary)' }}>
-          Import a PDF lecture or pick one from the left library to start calm, source-linked
-          bilingual reading.
+          Import a PDF lecture or pick one from the sidebar to read, highlight, build your own
+          glossary & margin notes, and compare directly with the original PDF.
         </p>
         <button
           type="button"
@@ -389,19 +504,16 @@ export function ReaderView({
     );
   }
 
-  // Determine the exact page to open if the student presses the top "Split PDF" toggle
   const currentContextPage =
-    selectedPageFilter !== 'all'
-      ? selectedPageFilter
-      : (activeChunk?.pageNumber ?? 1);
+    selectedPageFilter !== 'all' ? selectedPageFilter : (activeChunk?.pageNumber ?? 1);
 
   return (
     <div ref={splitContainerRef} className="flex-1 flex min-h-0 overflow-hidden relative">
-      {/* Floating Selection Toolbar */}
+      {/* Floating Text-Selection Toolbar: Non-AI Study Actions First + Optional Ask AI */}
       {floatingSel && (
         <div
           data-selection-toolbar="true"
-          className="fixed z-40 -translate-x-1/2 flex items-center gap-1 rounded-full border px-2 py-1.5 shadow-xl"
+          className="fixed z-40 -translate-x-1/2 flex items-center gap-0.5 rounded-full border px-2 py-1.5 shadow-xl"
           style={{
             left: `${floatingSel.x}px`,
             top: `${floatingSel.y}px`,
@@ -412,21 +524,52 @@ export function ReaderView({
         >
           <button
             type="button"
-            onClick={() => void runExplain(floatingSel.chunk, 'ar', 'explain_term', floatingSel.text)}
-            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium hover:opacity-85 cursor-pointer"
-          >
-            <Sparkles className="h-3 w-3" style={{ color: '#f59e0b' }} />
-            Explain العربية
-          </button>
-          <span className="opacity-25">|</span>
-          <button
-            type="button"
-            onClick={() => void runExplain(floatingSel.chunk, 'en', 'explain_term', floatingSel.text)}
+            onClick={() => void handleQuickHighlight(floatingSel.chunk, floatingSel.text)}
             className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-medium hover:opacity-85 cursor-pointer"
           >
-            <Languages className="h-3 w-3" />
-            EN
+            <Highlighter className="h-3 w-3" style={{ color: '#f59e0b' }} />
+            Highlight
           </button>
+
+          <span className="opacity-25">|</span>
+
+          <button
+            type="button"
+            onClick={() => openManualComposer(floatingSel.chunk, 'Manual', floatingSel.text)}
+            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-medium hover:opacity-85 cursor-pointer"
+          >
+            <PenLine className="h-3 w-3" />
+            Note
+          </button>
+
+          <span className="opacity-25">|</span>
+
+          <button
+            type="button"
+            onClick={() => openManualComposer(floatingSel.chunk, 'GlossaryTerm', floatingSel.text)}
+            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-medium hover:opacity-85 cursor-pointer"
+          >
+            <Tag className="h-3 w-3" />
+            Define
+          </button>
+
+          {canUseAiExplain && (
+            <>
+              <span className="opacity-25">|</span>
+              <button
+                type="button"
+                onClick={() =>
+                  void runExplain(floatingSel.chunk, 'ar', 'explain_term', floatingSel.text)
+                }
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-medium hover:opacity-85 cursor-pointer"
+                style={{ color: '#93c5fd' }}
+              >
+                <Sparkles className="h-3 w-3" />
+                Ask AI
+              </button>
+            </>
+          )}
+
           <span className="opacity-25">|</span>
           <button
             type="button"
@@ -470,10 +613,10 @@ export function ReaderView({
               borderColor: 'var(--border-subtle)',
             }}
           >
-            {/* Adaptive Scaffolding Meter */}
+            {/* Non-AI Study Progress Meter */}
             <div className="flex items-center gap-3 text-[11px]">
               <span className="font-medium" style={{ color: 'var(--ink-secondary)' }}>
-                Independence
+                Study Progress
               </span>
               <div
                 className="w-20 h-1.5 rounded-full overflow-hidden"
@@ -482,21 +625,21 @@ export function ReaderView({
                 <div
                   className="h-full rounded-full transition-all duration-300"
                   style={{
-                    width: `${Math.max(4, masteryStats.pct)}%`,
-                    backgroundColor: masteryStats.independent > 0 ? 'var(--sage)' : 'var(--accent)',
+                    width: `${Math.max(4, studyStats.pct)}%`,
+                    backgroundColor: studyStats.recalled > 0 ? 'var(--sage)' : 'var(--accent)',
                   }}
                 />
               </div>
               <div className="hidden xl:flex items-center gap-2" style={{ color: 'var(--ink-muted)' }}>
-                <span>{masteryStats.guided} Guided</span>
+                <span>{studyStats.highlighted} Highlights</span>
                 <span>·</span>
-                <span>{masteryStats.captured} Notes</span>
+                <span>{studyStats.noted} Notes</span>
                 <span>·</span>
-                <span>{masteryStats.independent} Recalled</span>
+                <span>{studyStats.recalled} Recalled</span>
               </div>
             </div>
 
-            {/* Right Controls: Page filter + 3-way Split Switcher (None / Notes / Original PDF) + Zen */}
+            {/* Right Controls: Page filter + 3-way Split Switcher (Single / Split Notes / PDF p.N) + Zen */}
             <div className="flex items-center gap-2 flex-wrap">
               <select
                 value={selectedPageFilter}
@@ -518,7 +661,6 @@ export function ReaderView({
                 ))}
               </select>
 
-              {/* Split View Switcher: Focus | Split Notes | Split PDF */}
               <div
                 className="inline-flex items-center rounded-xl border p-0.5 text-xs"
                 style={{
@@ -540,9 +682,7 @@ export function ReaderView({
                 </button>
                 <button
                   type="button"
-                  onClick={() =>
-                    onChangeSplitMode(splitMode === 'notes' ? 'none' : 'notes')
-                  }
+                  onClick={() => onChangeSplitMode(splitMode === 'notes' ? 'none' : 'notes')}
                   className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-medium transition cursor-pointer"
                   style={
                     splitMode === 'notes'
@@ -605,19 +745,21 @@ export function ReaderView({
                 {doc.title}
               </h1>
 
-              {glossary.length > 0 && (
+              {/* Persisted Student Glossary Ribbon (Non-AI First) */}
+              {glossaryEntries.length > 0 && (
                 <div className="mt-5 flex flex-wrap items-center gap-1.5">
                   <span
                     className="inline-flex items-center gap-1 text-[11px] font-medium mr-1"
                     style={{ color: 'var(--ink-muted)' }}
                   >
                     <Tag className="h-3 w-3" />
-                    Key Terms:
+                    Glossary:
                   </span>
-                  {glossary.map((item) => (
+                  {glossaryEntries.map((item) => (
                     <button
                       key={`${item.term}-${item.chunkId}`}
                       type="button"
+                      title={item.definition || `Jump to Page ${item.pageNumber}`}
                       onClick={() =>
                         chunkRefs.current[item.chunkId]?.scrollIntoView({
                           behavior: 'smooth',
@@ -626,9 +768,9 @@ export function ReaderView({
                       }
                       className="font-mono-tech text-[11px] px-2 py-0.5 rounded-md border transition cursor-pointer hover:opacity-80"
                       style={{
-                        backgroundColor: 'var(--accent-soft)',
-                        borderColor: 'var(--accent-border)',
-                        color: 'var(--accent)',
+                        backgroundColor: item.fromAi ? 'var(--accent-soft)' : 'var(--sage-soft)',
+                        borderColor: item.fromAi ? 'var(--accent-border)' : 'var(--sage-border)',
+                        color: item.fromAi ? 'var(--accent)' : 'var(--sage)',
                       }}
                     >
                       {item.term} · p.{item.pageNumber}
@@ -636,6 +778,12 @@ export function ReaderView({
                   ))}
                 </div>
               )}
+
+              <p className="mt-4 text-xs" style={{ color: 'var(--ink-muted)' }}>
+                Select any text to <strong>Highlight</strong>, <strong>Add Note</strong>, or{' '}
+                <strong>Define Term</strong> in your own words
+                {canUseAiExplain ? ' — or use optional Ask AI when you want a second perspective.' : '.'}
+              </p>
             </header>
 
             {doc.status === 'Failed' && (
@@ -659,28 +807,29 @@ export function ReaderView({
               {visibleChunks.map((chunk, idx) => {
                 const prevPage = idx > 0 ? visibleChunks[idx - 1].pageNumber : null;
                 const showPageDivider = prevPage !== chunk.pageNumber;
-                const isHighlighted = chunk.id === highlightedChunkId;
+                const isHighlightedTarget = chunk.id === highlightedChunkId;
                 const isSelected = chunk.id === selectedChunkId;
-                const isExplainOpen = activeExplainChunkId === chunk.id;
+                const isManualOpen = manualComposeChunkId === chunk.id;
+                const isExplainOpen = canUseAiExplain && activeExplainChunkId === chunk.id;
 
                 const isRecalled = recalledChunkIds.has(chunk.id);
                 const isNoted = notedChunkIds.has(chunk.id);
-                const isGuided = explainedChunkIds.has(chunk.id);
+                const hasHighlight = highlightedChunkIds.has(chunk.id);
 
                 const stageDotColor = isRecalled
                   ? 'var(--sage)'
                   : isNoted
                     ? 'var(--accent)'
-                    : isGuided
+                    : hasHighlight
                       ? 'var(--warm)'
                       : 'var(--border-strong)';
 
                 const stageLabel = isRecalled
                   ? 'Recalled'
                   : isNoted
-                    ? 'In Notes'
-                    : isGuided
-                      ? 'Guided'
+                    ? 'Noted'
+                    : hasHighlight
+                      ? 'Highlighted'
                       : null;
 
                 return (
@@ -712,18 +861,22 @@ export function ReaderView({
                       onClick={() => onSelectChunk(chunk)}
                       onMouseUp={() => handlePassageMouseUp(chunk)}
                       className={`group relative rounded-2xl px-5 py-4 border transition ${
-                        isHighlighted ? 'citation-pulse' : ''
+                        isHighlightedTarget ? 'citation-pulse' : ''
                       }`}
                       style={{
                         backgroundColor:
-                          isHighlighted || isExplainOpen || isSelected
+                          isHighlightedTarget || isManualOpen || isExplainOpen || isSelected
                             ? 'var(--bg-surface)'
-                            : 'transparent',
-                        borderColor: isHighlighted
+                            : hasHighlight
+                              ? 'var(--warm-soft)'
+                              : 'transparent',
+                        borderColor: isHighlightedTarget
                           ? 'var(--warm)'
-                          : isExplainOpen || isSelected
+                          : isManualOpen || isExplainOpen || isSelected
                             ? 'var(--border-strong)'
-                            : 'transparent',
+                            : hasHighlight
+                              ? 'var(--warm-border)'
+                              : 'transparent',
                       }}
                     >
                       <div className="flex items-center justify-between gap-2 mb-2 min-h-[24px]">
@@ -757,14 +910,15 @@ export function ReaderView({
                               className="text-[10px] font-medium px-2 py-0.5 rounded-full"
                               style={{ backgroundColor: 'var(--warm-soft)', color: 'var(--warm)' }}
                             >
-                              Needs OCR
+                              Image Page
                             </span>
                           )}
                         </div>
 
+                        {/* Whisper-quiet Hover Actions: Non-AI Primary + Optional AI */}
                         <div
                           className={`flex items-center gap-1 transition-opacity ${
-                            isExplainOpen || isSelected
+                            isManualOpen || isExplainOpen || isSelected
                               ? 'opacity-100'
                               : 'opacity-0 group-hover:opacity-100'
                           }`}
@@ -773,30 +927,52 @@ export function ReaderView({
                             type="button"
                             onClick={(e) => {
                               e.stopPropagation();
-                              void runExplain(chunk, 'ar', 'explain_concept');
+                              openManualComposer(chunk, 'Manual');
                             }}
                             className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-[11px] font-medium text-white cursor-pointer"
                             style={{ backgroundColor: 'var(--accent)' }}
                           >
-                            <Sparkles className="h-3 w-3" />
-                            Explain العربية
+                            <PenLine className="h-3 w-3" />
+                            Add Note
                           </button>
 
                           <button
                             type="button"
                             onClick={(e) => {
                               e.stopPropagation();
-                              void runExplain(chunk, 'en', 'explain_concept');
+                              void handleQuickHighlight(chunk);
                             }}
-                            className="rounded-lg border px-2 py-1 text-[11px] font-medium cursor-pointer"
+                            title="Highlight this passage"
+                            className="inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[11px] font-medium cursor-pointer"
                             style={{
                               backgroundColor: 'var(--bg-elevated)',
                               borderColor: 'var(--border-subtle)',
-                              color: 'var(--ink-secondary)',
+                              color: hasHighlight ? 'var(--warm)' : 'var(--ink-secondary)',
                             }}
                           >
-                            EN
+                            <Highlighter className="h-3 w-3" />
+                            {hasHighlight ? 'Marked' : 'Highlight'}
                           </button>
+
+                          {canUseAiExplain && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void runExplain(chunk, 'ar', 'explain_concept');
+                              }}
+                              title="Optional AI explanation"
+                              className="inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[11px] font-medium cursor-pointer"
+                              style={{
+                                backgroundColor: 'var(--accent-soft)',
+                                borderColor: 'var(--accent-border)',
+                                color: 'var(--accent)',
+                              }}
+                            >
+                              <Sparkles className="h-3 w-3" />
+                              Ask AI
+                            </button>
+                          )}
 
                           <button
                             type="button"
@@ -827,17 +1003,150 @@ export function ReaderView({
                         {chunk.content}
                       </p>
 
-                      {isExplainOpen && (
+                      {/* PRIMARY NON-AI INLINE ANNOTATION COMPOSER */}
+                      {isManualOpen && (
                         <div
                           onClick={(e) => e.stopPropagation()}
-                          className="mt-5 rounded-2xl border p-4 sm:p-5 space-y-3.5"
+                          className="mt-5 rounded-2xl border p-4 sm:p-5 space-y-3"
                           style={{
                             backgroundColor: 'var(--bg-elevated)',
                             borderColor: 'var(--border-strong)',
                           }}
                         >
                           <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div className="flex items-center gap-1.5">
+                              {(
+                                [
+                                  ['Manual', 'Margin Note'],
+                                  ['StoryMode', '1-Line Summary'],
+                                  ['GlossaryTerm', 'Glossary Term'],
+                                ] as const
+                              ).map(([kind, label]) => (
+                                <button
+                                  key={kind}
+                                  type="button"
+                                  onClick={() => setManualKind(kind)}
+                                  className="px-2.5 py-1 rounded-lg text-[11px] font-medium transition cursor-pointer"
+                                  style={
+                                    manualKind === kind
+                                      ? { backgroundColor: 'var(--accent)', color: '#ffffff' }
+                                      : {
+                                          backgroundColor: 'var(--bg-surface)',
+                                          color: 'var(--ink-secondary)',
+                                        }
+                                  }
+                                >
+                                  {label}
+                                </button>
+                              ))}
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={() => setManualComposeChunkId(null)}
+                              className="p-1 rounded-lg cursor-pointer"
+                              style={{ color: 'var(--ink-muted)' }}
+                            >
+                              <X className="h-4 w-4" />
+                            </button>
+                          </div>
+
+                          <input
+                            type="text"
+                            dir="auto"
+                            value={manualTitle}
+                            onChange={(e) => setManualTitle(e.target.value)}
+                            placeholder={
+                              manualKind === 'GlossaryTerm'
+                                ? 'Technical term (e.g. Elasticity)'
+                                : 'Note title...'
+                            }
+                            className="w-full rounded-xl border px-3 py-2 text-xs font-semibold focus:outline-none"
+                            style={{
+                              backgroundColor: 'var(--bg-surface)',
+                              borderColor: 'var(--border-subtle)',
+                              color: 'var(--ink-primary)',
+                            }}
+                          />
+
+                          <textarea
+                            rows={manualKind === 'StoryMode' ? 2 : 5}
+                            dir="auto"
+                            value={manualBody}
+                            onChange={(e) => setManualBody(e.target.value)}
+                            placeholder={
+                              manualKind === 'GlossaryTerm'
+                                ? 'Write your definition in Arabic or English...'
+                                : manualKind === 'StoryMode'
+                                  ? 'Summarize this paragraph in one clear sentence...'
+                                  : 'Write your own explanation, takeaways, or exam cues...'
+                            }
+                            className="w-full rounded-xl border p-3 text-xs leading-relaxed focus:outline-none resize-y"
+                            style={{
+                              backgroundColor: 'var(--bg-surface)',
+                              borderColor: 'var(--border-subtle)',
+                              color: 'var(--ink-primary)',
+                            }}
+                          />
+
+                          <div className="flex items-center justify-between gap-2 pt-1">
+                            <span className="text-[11px]" style={{ color: 'var(--ink-muted)' }}>
+                              Anchored to Page {chunk.pageNumber} · Chunk #{chunk.chunkIndex}
+                            </span>
+
+                            <button
+                              type="button"
+                              disabled={savingManual || !manualTitle.trim() || !manualBody.trim()}
+                              onClick={async () => {
+                                setSavingManual(true);
+                                try {
+                                  await onSaveNote({
+                                    chunk,
+                                    title: manualTitle.trim(),
+                                    contentMarkdown: manualBody.trim(),
+                                    sourcePageNumber: chunk.pageNumber,
+                                    language: /[\u0600-\u06FF]/.test(manualBody) ? 'ar' : 'en',
+                                    sourceType: manualKind,
+                                  });
+                                  setManualComposeChunkId(null);
+                                  setManualBody('');
+                                } finally {
+                                  setSavingManual(false);
+                                }
+                              }}
+                              className="inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-xs font-medium text-white cursor-pointer disabled:opacity-45"
+                              style={{ backgroundColor: 'var(--sage)' }}
+                            >
+                              <Bookmark className="h-3.5 w-3.5" />
+                              {savingManual
+                                ? 'Saving...'
+                                : manualKind === 'GlossaryTerm'
+                                  ? 'Save to Glossary & Notes'
+                                  : 'Save Note'}
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* OPTIONAL AI EXPLANATION CARD (Rendered ONLY when user opted into AI Explanations) */}
+                      {isExplainOpen && (
+                        <div
+                          onClick={(e) => e.stopPropagation()}
+                          className="mt-5 rounded-2xl border p-4 sm:p-5 space-y-3.5"
+                          style={{
+                            backgroundColor: 'var(--bg-elevated)',
+                            borderColor: 'var(--accent-border)',
+                          }}
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-2">
                             <div className="flex flex-wrap items-center gap-1.5">
+                              <span
+                                className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider mr-1"
+                                style={{ color: 'var(--accent)' }}
+                              >
+                                <Sparkles className="h-3 w-3" />
+                                Optional AI
+                              </span>
                               {(
                                 [
                                   ['explain_concept', 'Concept'],
@@ -904,7 +1213,7 @@ export function ReaderView({
                               style={{ color: 'var(--ink-secondary)' }}
                             >
                               <Loader2 className="h-4 w-4 animate-spin" style={{ color: 'var(--accent)' }} />
-                              Generating grounded explanation for Page {chunk.pageNumber}...
+                              Generating optional AI explanation for Page {chunk.pageNumber}...
                             </div>
                           ) : (
                             explanationResult && (
@@ -933,7 +1242,7 @@ export function ReaderView({
                                   value={draftTitle}
                                   onChange={(e) => {
                                     setDraftTitle(e.target.value);
-                                    setJustSaved(false);
+                                    setJustSavedAi(false);
                                   }}
                                   className="w-full rounded-xl border px-3 py-2 text-xs font-semibold focus:outline-none"
                                   style={{
@@ -949,7 +1258,7 @@ export function ReaderView({
                                   value={draftContent}
                                   onChange={(e) => {
                                     setDraftContent(e.target.value);
-                                    setJustSaved(false);
+                                    setJustSavedAi(false);
                                   }}
                                   className="w-full rounded-xl border p-3 text-xs leading-relaxed focus:outline-none resize-y"
                                   style={{
@@ -961,7 +1270,7 @@ export function ReaderView({
 
                                 <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
                                   <span className="text-[11px]" style={{ color: 'var(--ink-muted)' }}>
-                                    Edit freely · Saved notes sync live with Split Notes
+                                    Edit into your own words before keeping
                                   </span>
 
                                   <button
@@ -970,24 +1279,25 @@ export function ReaderView({
                                     onClick={async () => {
                                       setSavingDraft(true);
                                       try {
-                                        await onSaveExplanationAsNote({
+                                        await onSaveNote({
                                           chunk,
                                           title: draftTitle.trim() || explanationResult.suggestedNoteTitle,
                                           contentMarkdown: draftContent,
                                           sourcePageNumber: explanationResult.sourcePageNumber,
                                           language: explanationResult.targetLanguage,
+                                          sourceType: 'AiExplanationEdited',
                                         });
-                                        setJustSaved(true);
+                                        setJustSavedAi(true);
                                       } finally {
                                         setSavingDraft(false);
                                       }
                                     }}
                                     className="inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-xs font-medium text-white transition cursor-pointer disabled:opacity-50"
                                     style={{
-                                      backgroundColor: justSaved ? 'var(--sage)' : 'var(--accent)',
+                                      backgroundColor: justSavedAi ? 'var(--sage)' : 'var(--accent)',
                                     }}
                                   >
-                                    {justSaved ? (
+                                    {justSavedAi ? (
                                       <>
                                         <Check className="h-3.5 w-3.5" />
                                         Saved to Notes
@@ -1033,7 +1343,7 @@ export function ReaderView({
             <GripVertical className="h-4 w-4" />
           </div>
 
-          {/* SPLIT MODE A: LIVE NOTES PANEL ALONGSIDE READ & EXPLAIN */}
+          {/* SPLIT MODE A: LIVE NOTES PANEL ALONGSIDE STUDY READER */}
           {splitMode === 'notes' && (
             <section
               className="shrink-0 flex flex-col overflow-hidden"
@@ -1058,7 +1368,7 @@ export function ReaderView({
                       setQuickTitle(
                         activeChunk
                           ? `${activeChunk.heading || `Page ${activeChunk.pageNumber}`} — Note`
-                          : 'Quick Study Note'
+                          : 'Study Note'
                       );
                     }}
                     className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-[11px] font-medium text-white cursor-pointer"
@@ -1078,8 +1388,35 @@ export function ReaderView({
                 </div>
               </div>
 
+              {/* Filter strip for All / Highlights / Glossary */}
+              <div
+                className="px-4 py-2 border-b flex items-center gap-1.5"
+                style={{ borderColor: 'var(--border-subtle)', backgroundColor: 'var(--bg-elevated)' }}
+              >
+                {(
+                  [
+                    ['all', 'All'],
+                    ['highlights', 'Highlights'],
+                    ['glossary', 'Glossary'],
+                  ] as const
+                ).map(([k, label]) => (
+                  <button
+                    key={k}
+                    type="button"
+                    onClick={() => setNotesFilter(k)}
+                    className="px-2.5 py-1 rounded-lg text-[11px] font-medium transition cursor-pointer"
+                    style={
+                      notesFilter === k
+                        ? { backgroundColor: 'var(--bg-surface)', color: 'var(--ink-primary)' }
+                        : { color: 'var(--ink-muted)' }
+                    }
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+
               <div className="flex-1 overflow-y-auto p-4 space-y-3">
-                {/* Quick Manual Note anchored to current passage */}
                 {showQuickNote && activeChunk && (
                   <div
                     className="rounded-2xl border p-3.5 space-y-2.5"
@@ -1132,7 +1469,7 @@ export function ReaderView({
                         onClick={async () => {
                           setSavingQuickNote(true);
                           try {
-                            await onSaveExplanationAsNote({
+                            await onSaveNote({
                               chunk: activeChunk,
                               title: quickTitle.trim(),
                               contentMarkdown: quickBody.trim(),
@@ -1155,16 +1492,16 @@ export function ReaderView({
                   </div>
                 )}
 
-                {docNotes.length === 0 ? (
+                {filteredSplitNotes.length === 0 ? (
                   <div
                     className="rounded-2xl border border-dashed p-6 text-center text-xs mt-4"
                     style={{ borderColor: 'var(--border-strong)', color: 'var(--ink-muted)' }}
                   >
-                    No notes for this lecture yet. Click <strong>New Note</strong> above or save an
-                    AI explanation from the left canvas.
+                    No entries here yet. Highlight text, click <strong>Add Note</strong> on any
+                    passage, or click <strong>New Note</strong> above.
                   </div>
                 ) : (
-                  docNotes.map((note) => {
+                  filteredSplitNotes.map((note) => {
                     const isEditing = editingNoteId === note.id;
                     return (
                       <div
@@ -1172,7 +1509,10 @@ export function ReaderView({
                         className="rounded-2xl border p-3.5 space-y-2"
                         style={{
                           backgroundColor: 'var(--bg-canvas)',
-                          borderColor: 'var(--border-subtle)',
+                          borderColor:
+                            note.sourceType === 'Highlight'
+                              ? 'var(--warm-border)'
+                              : 'var(--border-subtle)',
                         }}
                       >
                         {isEditing ? (
@@ -1244,6 +1584,21 @@ export function ReaderView({
                               >
                                 {note.title}
                               </button>
+                              <span
+                                className="text-[10px] px-1.5 py-0.5 rounded shrink-0"
+                                style={{
+                                  backgroundColor: 'var(--bg-elevated)',
+                                  color: 'var(--ink-muted)',
+                                }}
+                              >
+                                {note.sourceType === 'Highlight'
+                                  ? 'Highlight'
+                                  : note.sourceType === 'GlossaryTerm'
+                                    ? 'Glossary'
+                                    : note.sourceType === 'StoryMode'
+                                      ? 'Summary'
+                                      : 'Note'}
+                              </span>
                               <button
                                 type="button"
                                 onClick={() => void onDeleteNote(note.id)}

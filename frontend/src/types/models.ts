@@ -3,7 +3,14 @@ export interface UserDto {
   email: string;
   displayName: string;
   preferredLanguage: string;
+  dailyGoalPoints: number;
   defaultWorkspaceId: string;
+}
+
+export interface UpdateProfileRequest {
+  displayName: string;
+  preferredLanguage: string;
+  dailyGoalPoints: number;
 }
 
 export interface AuthResponse {
@@ -150,6 +157,15 @@ export interface HeatmapDayDto {
   date: string;
   count: number;
   level: number;
+  goalMet: boolean;
+}
+
+export interface GeneralInsightDto {
+  category: string;
+  headline: string;
+  observation: string;
+  severity: 'high' | 'medium' | 'low' | string;
+  affectedCount: number;
 }
 
 export interface InsightPointDto {
@@ -168,6 +184,9 @@ export interface DashboardResponse {
   email: string;
   preferredLanguage: string;
   memberSince: string;
+  dailyGoalPoints: number;
+  todayPoints: number;
+  goalMetDays: number;
   totalCourses: number;
   totalLectures: number;
   totalNotes: number;
@@ -176,8 +195,9 @@ export interface DashboardResponse {
   currentStreakDays: number;
   independenceScorePercent: number;
   heatmap: HeatmapDayDto[];
+  generalWeakPoints: GeneralInsightDto[];
   strongPoints: InsightPointDto[];
-  weakPoints: InsightPointDto[];
+  detailedWeakPoints: InsightPointDto[];
 }
 
 export interface QuizAttemptSummaryDto {
@@ -208,4 +228,13 @@ export interface SubmitQuizAttemptResponse {
   correctAnswer?: string | null;
   sourcePageNumber: number;
   chunkId: string;
+}
+
+export interface CreateManualQuizQuestionRequest {
+  chunkId: string;
+  questionType: 'mcq' | 'written';
+  prompt: string;
+  options?: string[];
+  correctOption?: string;
+  expectedPoints?: string;
 }

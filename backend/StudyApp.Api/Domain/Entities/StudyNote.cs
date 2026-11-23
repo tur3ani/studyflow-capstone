@@ -5,7 +5,9 @@ public enum NoteSourceType
     Manual = 0,
     AiExplanationEdited = 1,
     Recall = 2,
-    StoryMode = 3
+    StoryMode = 3,
+    Highlight = 4,
+    GlossaryTerm = 5
 }
 
 public sealed class StudyNote

@@ -98,7 +98,7 @@ export function CommandPalette({
       {
         id: 'act-split-notes',
         group: 'Actions',
-        label: 'Split View: Read & Explain + Notes',
+        label: 'Split View: Study Reader + Notes',
         subtitle: 'Open live notes alongside the lecture reader',
         icon: 'note',
         onSelect: () => onToggleSplitNotes(),
@@ -106,7 +106,7 @@ export function CommandPalette({
       {
         id: 'act-pdf',
         group: 'Actions',
-        label: 'Split View: Read & Explain + Original PDF',
+        label: 'Split View: Study Reader + Original PDF',
         subtitle: 'View original PDF starting at current passage page',
         icon: 'pdf',
         onSelect: () => onToggleSplitPdf(),

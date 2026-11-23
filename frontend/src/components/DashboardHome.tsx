@@ -1,31 +1,28 @@
+import { useMemo, useState } from 'react';
 import {
   AlertCircle,
   ArrowRight,
   Award,
   BookOpen,
   Brain,
+  ChevronDown,
+  ChevronUp,
   Flame,
+  Info,
   NotebookPen,
-  Sparkles,
+  Settings,
   Target,
   TrendingUp,
-  Upload,
 } from 'lucide-react';
 import type {
   DashboardResponse,
-  DocumentSummaryDto,
   InsightPointDto,
-  ProjectSummaryDto,
 } from '../types/models';
 
 interface DashboardHomeProps {
   dashboard: DashboardResponse | null;
-  projects: ProjectSummaryDto[];
-  recentDocuments: DocumentSummaryDto[];
-  uploading: boolean;
-  onTriggerUpload: () => void;
-  onOpenProject: (projectId: string) => void;
-  onOpenLecture: (documentId: string) => void;
+  onUpdateDailyGoal: (goalPoints: number) => Promise<void>;
+  onOpenSettings: () => void;
   onJumpToInsight: (insight: InsightPointDto) => Promise<void>;
 }
 
@@ -34,14 +31,16 @@ const HEATMAP_COLORS_DARK = ['#25221f', '#193b29', '#1e5b3a', '#258752', '#34d39
 
 export function DashboardHome({
   dashboard,
-  projects,
-  recentDocuments,
-  uploading,
-  onTriggerUpload,
-  onOpenProject,
-  onOpenLecture,
+  onUpdateDailyGoal,
+  onOpenSettings,
   onJumpToInsight,
 }: DashboardHomeProps) {
+  const [showDetailedWeakPoints, setShowDetailedWeakPoints] = useState(false);
+  const [showHeatmapInfo, setShowHeatmapInfo] = useState(false);
+  const [editingGoal, setEditingGoal] = useState(false);
+  const [goalDraft, setGoalDraft] = useState<number>(dashboard?.dailyGoalPoints ?? 6);
+  const [savingGoal, setSavingGoal] = useState(false);
+
   const initials = (dashboard?.displayName ?? 'ST')
     .split(' ')
     .filter(Boolean)
@@ -50,22 +49,40 @@ export function DashboardHome({
     .join('');
 
   // Group 84 days into 12 weekly columns (7 rows each)
-  const weeks: typeof dashboard extends null ? never : NonNullable<typeof dashboard>['heatmap'][] = [];
-  if (dashboard?.heatmap) {
+  const weeks = useMemo(() => {
+    if (!dashboard?.heatmap) return [];
+    const grouped: typeof dashboard.heatmap[] = [];
     for (let i = 0; i < dashboard.heatmap.length; i += 7) {
-      weeks.push(dashboard.heatmap.slice(i, i + 7));
+      grouped.push(dashboard.heatmap.slice(i, i + 7));
     }
-  }
+    return grouped;
+  }, [dashboard?.heatmap]);
 
-  const isDark = typeof document !== 'undefined' && document.documentElement.classList.contains('dark');
+  // Group detailed weak points by course for the "Show More" drawer
+  const weakPointsByCourse = useMemo(() => {
+    const map = new Map<string, InsightPointDto[]>();
+    for (const item of dashboard?.detailedWeakPoints ?? []) {
+      const list = map.get(item.courseName) ?? [];
+      list.push(item);
+      map.set(item.courseName, list);
+    }
+    return Array.from(map.entries());
+  }, [dashboard?.detailedWeakPoints]);
+
+  const isDark =
+    typeof document !== 'undefined' && document.documentElement.classList.contains('dark');
   const palette = isDark ? HEATMAP_COLORS_DARK : HEATMAP_COLORS_LIGHT;
+
+  const dailyGoal = dashboard?.dailyGoalPoints ?? 6;
+  const todayPoints = dashboard?.todayPoints ?? 0;
+  const todayPct = Math.min(100, Math.round((todayPoints / Math.max(1, dailyGoal)) * 100));
 
   return (
     <div className="flex-1 overflow-y-auto px-6 sm:px-10 lg:px-14 py-9">
-      <div className="max-w-6xl mx-auto space-y-8">
-        {/* Student Profile & Independence Header Card */}
+      <div className="max-w-5xl mx-auto space-y-7">
+        {/* 1. Refined Student Profile & Daily Goal Hero */}
         <section
-          className="rounded-3xl border p-6 sm:p-8 flex flex-col lg:flex-row lg:items-center justify-between gap-6"
+          className="rounded-3xl border p-6 sm:p-7 flex flex-col lg:flex-row lg:items-center justify-between gap-6"
           style={{
             backgroundColor: 'var(--bg-surface)',
             borderColor: 'var(--border-subtle)',
@@ -100,10 +117,10 @@ export function DashboardHome({
                 </span>
               </div>
               <p className="text-xs" style={{ color: 'var(--ink-secondary)' }}>
-                {dashboard?.email} · Studying since{' '}
-                {dashboard ? new Date(dashboard.memberSince).toLocaleDateString() : 'today'}
+                {dashboard?.email} · Select any course from the sidebar to study
               </p>
-              <div className="flex flex-wrap items-center gap-3 pt-1 text-xs">
+
+              <div className="flex flex-wrap items-center gap-2.5 pt-1 text-xs">
                 <span
                   className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full font-medium"
                   style={{ backgroundColor: 'var(--warm-soft)', color: 'var(--warm)' }}
@@ -116,47 +133,60 @@ export function DashboardHome({
                   style={{ backgroundColor: 'var(--sage-soft)', color: 'var(--sage)' }}
                 >
                   <Target className="h-3.5 w-3.5" />
-                  {dashboard?.independenceScorePercent ?? 0}% Independence Index
+                  {dashboard?.independenceScorePercent ?? 0}% Independence
                 </span>
               </div>
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2.5 shrink-0">
-            <button
-              type="button"
-              disabled={uploading}
-              onClick={onTriggerUpload}
-              className="inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-medium text-white cursor-pointer disabled:opacity-50"
-              style={{ backgroundColor: 'var(--accent)' }}
+          {/* Right: Today's Goal Progress Summary */}
+          <div
+            className="rounded-2xl border p-4 min-w-[230px] space-y-2"
+            style={{
+              backgroundColor: 'var(--bg-canvas)',
+              borderColor: 'var(--border-subtle)',
+            }}
+          >
+            <div className="flex items-center justify-between text-xs">
+              <span className="font-medium" style={{ color: 'var(--ink-secondary)' }}>
+                Today's Goal
+              </span>
+              <span className="font-mono-tech font-semibold" style={{ color: todayPct >= 100 ? 'var(--sage)' : 'var(--accent)' }}>
+                {todayPoints} / {dailyGoal} pts
+              </span>
+            </div>
+            <div
+              className="h-2 rounded-full overflow-hidden"
+              style={{ backgroundColor: 'var(--bg-hover)' }}
             >
-              <Upload className="h-4 w-4" />
-              {uploading ? 'Importing...' : 'Import Lecture PDF'}
-            </button>
-            {recentDocuments[0] && (
+              <div
+                className="h-full rounded-full transition-all duration-300"
+                style={{
+                  width: `${Math.max(todayPoints > 0 ? 8 : 0, todayPct)}%`,
+                  backgroundColor: todayPct >= 100 ? 'var(--sage)' : 'var(--accent)',
+                }}
+              />
+            </div>
+            <div className="flex items-center justify-between text-[11px]" style={{ color: 'var(--ink-muted)' }}>
+              <span>{todayPct >= 100 ? 'Daily goal achieved!' : `${dailyGoal - todayPoints} pts remaining`}</span>
               <button
                 type="button"
-                onClick={() => onOpenLecture(recentDocuments[0].id)}
-                className="inline-flex items-center gap-2 rounded-xl border px-4 py-2.5 text-xs font-medium cursor-pointer"
-                style={{
-                  backgroundColor: 'var(--bg-elevated)',
-                  borderColor: 'var(--border-subtle)',
-                  color: 'var(--ink-primary)',
-                }}
+                onClick={onOpenSettings}
+                className="inline-flex items-center gap-1 hover:underline cursor-pointer"
+                style={{ color: 'var(--accent)' }}
               >
-                Continue Reading
-                <ArrowRight className="h-3.5 w-3.5" />
+                <Settings className="h-3 w-3" />
+                Settings
               </button>
-            )}
+            </div>
           </div>
         </section>
 
-        {/* Stats Strip */}
-        <section className="grid grid-cols-2 md:grid-cols-5 gap-3.5">
+        {/* 2. Compact Metrics Row */}
+        <section className="grid grid-cols-2 md:grid-cols-4 gap-3.5">
           {[
-            { label: 'Courses', value: dashboard?.totalCourses ?? projects.length, icon: BookOpen, color: 'var(--accent)' },
-            { label: 'Lectures', value: dashboard?.totalLectures ?? 0, icon: Sparkles, color: 'var(--accent)' },
-            { label: 'Saved Notes', value: dashboard?.totalNotes ?? 0, icon: NotebookPen, color: 'var(--warm)' },
+            { label: 'Lectures', value: dashboard?.totalLectures ?? 0, icon: BookOpen, color: 'var(--accent)' },
+            { label: 'Notes & Highlights', value: dashboard?.totalNotes ?? 0, icon: NotebookPen, color: 'var(--warm)' },
             { label: 'Active Recalls', value: dashboard?.totalRecallSessions ?? 0, icon: Brain, color: 'var(--sage)' },
             { label: 'Quiz Attempts', value: dashboard?.totalQuizAttempts ?? 0, icon: Award, color: 'var(--sage)' },
           ].map((stat) => {
@@ -164,25 +194,25 @@ export function DashboardHome({
             return (
               <div
                 key={stat.label}
-                className="rounded-2xl border p-4"
+                className="rounded-2xl border px-4 py-3.5 flex items-center justify-between"
                 style={{
                   backgroundColor: 'var(--bg-surface)',
                   borderColor: 'var(--border-subtle)',
                 }}
               >
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-[11px] font-medium" style={{ color: 'var(--ink-muted)' }}>
+                <div>
+                  <div className="text-[11px] font-medium" style={{ color: 'var(--ink-muted)' }}>
                     {stat.label}
-                  </span>
-                  <Icon className="h-3.5 w-3.5" style={{ color: stat.color }} />
+                  </div>
+                  <div className="font-editorial text-2xl font-medium mt-0.5">{stat.value}</div>
                 </div>
-                <div className="font-editorial text-3xl font-medium">{stat.value}</div>
+                <Icon className="h-4 w-4 opacity-80" style={{ color: stat.color }} />
               </div>
             );
           })}
         </section>
 
-        {/* Study Consistency Heatmap */}
+        {/* 3. Goal-Scaled Study Consistency Heatmap */}
         <section
           className="rounded-3xl border p-6 space-y-4"
           style={{
@@ -190,25 +220,115 @@ export function DashboardHome({
             borderColor: 'var(--border-subtle)',
           }}
         >
-          <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <h2 className="font-editorial text-xl font-medium">Study Consistency Heatmap</h2>
+              <div className="flex items-center gap-2">
+                <h2 className="font-editorial text-xl font-medium">Study Consistency Heatmap</h2>
+                <button
+                  type="button"
+                  onClick={() => setShowHeatmapInfo((v) => !v)}
+                  title="How heatmap points work"
+                  className="p-1 rounded-full cursor-pointer"
+                  style={{ color: 'var(--ink-muted)' }}
+                >
+                  <Info className="h-3.5 w-3.5" />
+                </button>
+              </div>
               <p className="text-xs mt-0.5" style={{ color: 'var(--ink-muted)' }}>
-                Last 12 weeks across lecture imports, saved notes, active recall sessions, and quizzes
+                12 weeks scaled to your daily goal ({dailyGoal} pts/day) ·{' '}
+                <strong>{dashboard?.goalMetDays ?? 0}</strong> goal days hit
               </p>
             </div>
-            <div className="flex items-center gap-1.5 text-[11px]" style={{ color: 'var(--ink-muted)' }}>
-              <span>Less</span>
-              {palette.map((hex, idx) => (
-                <span
-                  key={idx}
-                  className="h-3 w-3 rounded-[3px]"
-                  style={{ backgroundColor: hex }}
-                />
-              ))}
-              <span>More</span>
+
+            <div className="flex items-center gap-3 flex-wrap">
+              {editingGoal ? (
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="number"
+                    min={2}
+                    max={50}
+                    value={goalDraft}
+                    onChange={(e) => setGoalDraft(Math.max(2, Math.min(50, Number(e.target.value) || 6)))}
+                    className="w-16 rounded-lg border px-2 py-1 text-xs font-mono-tech focus:outline-none"
+                    style={{
+                      backgroundColor: 'var(--bg-canvas)',
+                      borderColor: 'var(--border-strong)',
+                      color: 'var(--ink-primary)',
+                    }}
+                  />
+                  <span className="text-[11px]" style={{ color: 'var(--ink-muted)' }}>
+                    pts/day
+                  </span>
+                  <button
+                    type="button"
+                    disabled={savingGoal}
+                    onClick={async () => {
+                      setSavingGoal(true);
+                      try {
+                        await onUpdateDailyGoal(goalDraft);
+                        setEditingGoal(false);
+                      } finally {
+                        setSavingGoal(false);
+                      }
+                    }}
+                    className="rounded-lg px-2.5 py-1 text-[11px] font-medium text-white cursor-pointer"
+                    style={{ backgroundColor: 'var(--accent)' }}
+                  >
+                    {savingGoal ? '...' : 'Save'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEditingGoal(false)}
+                    className="text-[11px] px-1.5 cursor-pointer"
+                    style={{ color: 'var(--ink-muted)' }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setGoalDraft(dailyGoal);
+                    setEditingGoal(true);
+                  }}
+                  className="rounded-xl border px-3 py-1 text-[11px] font-medium transition cursor-pointer"
+                  style={{
+                    backgroundColor: 'var(--bg-elevated)',
+                    borderColor: 'var(--border-subtle)',
+                    color: 'var(--ink-secondary)',
+                  }}
+                >
+                  Set Daily Goal
+                </button>
+              )}
+
+              <div className="flex items-center gap-1.5 text-[11px]" style={{ color: 'var(--ink-muted)' }}>
+                <span>0%</span>
+                {palette.map((hex, idx) => (
+                  <span key={idx} className="h-3 w-3 rounded-[3px]" style={{ backgroundColor: hex }} />
+                ))}
+                <span>100%</span>
+              </div>
             </div>
           </div>
+
+          {showHeatmapInfo && (
+            <div
+              className="rounded-2xl border p-3.5 text-[11px] leading-relaxed"
+              style={{
+                backgroundColor: 'var(--bg-elevated)',
+                borderColor: 'var(--border-subtle)',
+                color: 'var(--ink-secondary)',
+              }}
+            >
+              <strong>Heatmap Logic:</strong> Closed-book Active Recall earns <strong>+3 pts</strong>,
+              saving a Note / Highlight / Glossary Term earns <strong>+2 pts</strong>, importing a
+              Lecture earns <strong>+2 pts</strong>, and submitting a Quiz attempt earns{' '}
+              <strong>+1 pt</strong>. Square shade reflects % of your daily goal ({dailyGoal} pts),
+              turning darkest green when you hit 100%.
+            </div>
+          )}
 
           <div className="overflow-x-auto pb-1">
             <div className="inline-flex gap-1.5">
@@ -217,7 +337,7 @@ export function DashboardHome({
                   {week.map((day) => (
                     <div
                       key={day.date}
-                      title={`${day.date}: ${day.count} study activity points`}
+                      title={`${day.date}: ${day.count} / ${dailyGoal} pts${day.goalMet ? ' (Goal Met!)' : ''}`}
                       className="h-4 w-4 sm:h-4.5 sm:w-4.5 rounded-[4px] transition-transform hover:scale-110"
                       style={{ backgroundColor: palette[Math.min(4, Math.max(0, day.level))] }}
                     />
@@ -228,8 +348,100 @@ export function DashboardHome({
           </div>
         </section>
 
-        {/* Strong Points vs Weak Points */}
-        <section className="grid lg:grid-cols-2 gap-6">
+        {/* 4. Two-Column Insights: General Weak Points (with Show More Course Breakdown) + Strong Points */}
+        <section className="grid lg:grid-cols-2 gap-6 items-start">
+          {/* General Weak Points & Review Overview */}
+          <div
+            className="rounded-3xl border p-6 space-y-4"
+            style={{
+              backgroundColor: 'var(--bg-surface)',
+              borderColor: 'var(--border-subtle)',
+            }}
+          >
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <AlertCircle className="h-4 w-4" style={{ color: 'var(--warm)' }} />
+                <h2 className="font-editorial text-xl font-medium">General Weak Points</h2>
+              </div>
+              <span
+                className="text-[10px] font-medium px-2.5 py-0.5 rounded-full"
+                style={{ backgroundColor: 'var(--warm-soft)', color: 'var(--warm)' }}
+              >
+                Cross-Course Summary
+              </span>
+            </div>
+
+            {!dashboard || dashboard.generalWeakPoints.length === 0 ? (
+              <div
+                className="rounded-2xl border border-dashed p-6 text-center text-xs"
+                style={{ borderColor: 'var(--border-strong)', color: 'var(--ink-muted)' }}
+              >
+                No general weak points detected yet. As you study, recall, and take quizzes, high-level
+                patterns will surface here.
+              </div>
+            ) : (
+              <div className="space-y-2.5">
+                {dashboard.generalWeakPoints.map((item, idx) => (
+                  <div
+                    key={`${item.category}-${idx}`}
+                    className="rounded-2xl border p-4 space-y-1.5"
+                    style={{
+                      backgroundColor: 'var(--bg-canvas)',
+                      borderColor: 'var(--border-subtle)',
+                    }}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span
+                        className="font-mono-tech text-[10px] uppercase tracking-wider font-semibold"
+                        style={{
+                          color: item.severity === 'high' ? 'var(--danger)' : 'var(--warm)',
+                        }}
+                      >
+                        {item.category}
+                      </span>
+                      <span
+                        className="text-[10px] px-2 py-0.5 rounded-full"
+                        style={{ backgroundColor: 'var(--bg-elevated)', color: 'var(--ink-muted)' }}
+                      >
+                        {item.affectedCount} item{item.affectedCount === 1 ? '' : 's'}
+                      </span>
+                    </div>
+                    <div className="text-xs font-semibold">{item.headline}</div>
+                    <p className="text-[11px] leading-relaxed" style={{ color: 'var(--ink-secondary)' }}>
+                      {item.observation}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Show More button -> reveals Detailed Course-by-Course Weak Points */}
+            {dashboard && dashboard.detailedWeakPoints.length > 0 && (
+              <div className="pt-2 border-t" style={{ borderColor: 'var(--border-subtle)' }}>
+                <button
+                  type="button"
+                  onClick={() => setShowDetailedWeakPoints((v) => !v)}
+                  className="w-full flex items-center justify-between rounded-xl px-3 py-2 text-xs font-medium transition cursor-pointer"
+                  style={{
+                    backgroundColor: 'var(--bg-elevated)',
+                    color: 'var(--accent)',
+                  }}
+                >
+                  <span>
+                    {showDetailedWeakPoints
+                      ? 'Hide Detailed Course Weak Points'
+                      : `Show More · Detailed Course Weak Points (${dashboard.detailedWeakPoints.length})`}
+                  </span>
+                  {showDetailedWeakPoints ? (
+                    <ChevronUp className="h-4 w-4" />
+                  ) : (
+                    <ChevronDown className="h-4 w-4" />
+                  )}
+                </button>
+              </div>
+            )}
+          </div>
+
           {/* Strong Points */}
           <div
             className="rounded-3xl border p-6 space-y-4"
@@ -238,13 +450,13 @@ export function DashboardHome({
               borderColor: 'var(--border-subtle)',
             }}
           >
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2">
                 <TrendingUp className="h-4 w-4" style={{ color: 'var(--sage)' }} />
                 <h2 className="font-editorial text-xl font-medium">Strong Points</h2>
               </div>
               <span
-                className="text-[11px] px-2.5 py-0.5 rounded-full font-medium"
+                className="text-[10px] font-medium px-2.5 py-0.5 rounded-full"
                 style={{ backgroundColor: 'var(--sage-soft)', color: 'var(--sage)' }}
               >
                 Mastered & Recalled
@@ -256,8 +468,8 @@ export function DashboardHome({
                 className="rounded-2xl border border-dashed p-6 text-center text-xs"
                 style={{ borderColor: 'var(--border-strong)', color: 'var(--ink-muted)' }}
               >
-                Complete an Active Recall session or score well on a Lecture Quiz to build your
-                strong points list.
+                Complete a closed-book Active Recall session or score well on a quiz to see your
+                strongest topics here.
               </div>
             ) : (
               <div className="space-y-2.5">
@@ -300,123 +512,86 @@ export function DashboardHome({
               </div>
             )}
           </div>
+        </section>
 
-          {/* Weak Points / Needs Review */}
-          <div
-            className="rounded-3xl border p-6 space-y-4"
+        {/* 5. Expanded Detailed Course Weak Points Panel (Only shown when pressing "Show More") */}
+        {showDetailedWeakPoints && weakPointsByCourse.length > 0 && (
+          <section
+            className="rounded-3xl border p-6 space-y-5"
             style={{
               backgroundColor: 'var(--bg-surface)',
-              borderColor: 'var(--border-subtle)',
+              borderColor: 'var(--warm-border)',
             }}
           >
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <AlertCircle className="h-4 w-4" style={{ color: 'var(--warm)' }} />
-                <h2 className="font-editorial text-xl font-medium">Weak Points & Review Queue</h2>
+              <div>
+                <h3 className="font-editorial text-2xl font-medium">
+                  Detailed Course Weak Points & Review Queue
+                </h3>
+                <p className="text-xs mt-0.5" style={{ color: 'var(--ink-secondary)' }}>
+                  Grouped by course — jump directly to any lecture or missed passage to review.
+                </p>
               </div>
-              <span
-                className="text-[11px] px-2.5 py-0.5 rounded-full font-medium"
-                style={{ backgroundColor: 'var(--warm-soft)', color: 'var(--warm)' }}
+              <button
+                type="button"
+                onClick={() => setShowDetailedWeakPoints(false)}
+                className="text-xs font-medium cursor-pointer"
+                style={{ color: 'var(--ink-muted)' }}
               >
-                Focus Next
-              </span>
+                Collapse
+              </button>
             </div>
 
-            {!dashboard || dashboard.weakPoints.length === 0 ? (
-              <div
-                className="rounded-2xl border border-dashed p-6 text-center text-xs"
-                style={{ borderColor: 'var(--border-strong)', color: 'var(--ink-muted)' }}
-              >
-                No weak points flagged yet. Upload lectures and test yourself in Techniques to spot
-                gaps automatically.
-              </div>
-            ) : (
-              <div className="space-y-2.5">
-                {dashboard.weakPoints.map((pt, idx) => (
+            <div className="space-y-5">
+              {weakPointsByCourse.map(([courseName, items]) => (
+                <div key={courseName} className="space-y-2.5">
                   <div
-                    key={`${pt.documentId}-${pt.chunkId}-${idx}`}
-                    className="rounded-2xl border p-4 flex items-center justify-between gap-3"
-                    style={{
-                      backgroundColor: 'var(--bg-canvas)',
-                      borderColor: 'var(--border-subtle)',
-                    }}
+                    className="text-xs font-semibold uppercase tracking-wider"
+                    style={{ color: 'var(--ink-muted)' }}
                   >
-                    <div className="min-w-0">
-                      <div className="text-xs font-semibold truncate" dir="auto">
-                        {pt.title}
-                      </div>
-                      <div className="text-[11px] mt-0.5" style={{ color: 'var(--ink-secondary)' }}>
-                        {pt.courseName} · {pt.reason}
-                      </div>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={() => void onJumpToInsight(pt)}
-                      className="shrink-0 inline-flex items-center gap-1 rounded-xl px-3 py-1.5 text-[11px] font-medium text-white cursor-pointer"
-                      style={{ backgroundColor: 'var(--warm)' }}
-                    >
-                      Review
-                      <ArrowRight className="h-3 w-3" />
-                    </button>
+                    {courseName} ({items.length})
                   </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </section>
+                  <div className="grid md:grid-cols-2 gap-3">
+                    {items.map((pt, idx) => (
+                      <div
+                        key={`${pt.documentId}-${pt.chunkId}-${idx}`}
+                        className="rounded-2xl border p-4 flex items-center justify-between gap-3"
+                        style={{
+                          backgroundColor: 'var(--bg-canvas)',
+                          borderColor: 'var(--border-subtle)',
+                        }}
+                      >
+                        <div className="min-w-0">
+                          <div className="text-xs font-semibold truncate" dir="auto">
+                            {pt.title}
+                          </div>
+                          <div className="text-[11px] mt-0.5" style={{ color: 'var(--ink-secondary)' }}>
+                            {pt.reason}
+                          </div>
+                          {pt.pageNumber && (
+                            <div className="font-mono-tech text-[10px] mt-1" style={{ color: 'var(--ink-muted)' }}>
+                              Source · Page {pt.pageNumber} · Score {pt.scorePercent}%
+                            </div>
+                          )}
+                        </div>
 
-        {/* Courses Quick Directory */}
-        <section className="space-y-3">
-          <div className="flex items-center justify-between">
-            <h2 className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--ink-muted)' }}>
-              Your Courses
-            </h2>
-            <span className="text-xs" style={{ color: 'var(--ink-muted)' }}>
-              Click any course to enter its Lecture Studio
-            </span>
-          </div>
-
-          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {projects.map((p) => (
-              <button
-                key={p.id}
-                type="button"
-                onClick={() => onOpenProject(p.id)}
-                className="text-left rounded-2xl border p-5 transition cursor-pointer hover:shadow-sm flex flex-col justify-between gap-4"
-                style={{
-                  backgroundColor: 'var(--bg-surface)',
-                  borderColor: 'var(--border-subtle)',
-                }}
-              >
-                <div>
-                  {p.courseCode && (
-                    <span
-                      className="font-mono-tech text-[10px] px-2 py-0.5 rounded-md"
-                      style={{ backgroundColor: 'var(--accent-soft)', color: 'var(--accent)' }}
-                    >
-                      {p.courseCode}
-                    </span>
-                  )}
-                  <h3 className="font-editorial text-xl font-medium mt-2">{p.name}</h3>
-                  {p.description && (
-                    <p className="text-xs mt-1 line-clamp-2" style={{ color: 'var(--ink-secondary)' }}>
-                      {p.description}
-                    </p>
-                  )}
+                        <button
+                          type="button"
+                          onClick={() => void onJumpToInsight(pt)}
+                          className="shrink-0 inline-flex items-center gap-1 rounded-xl px-3 py-1.5 text-[11px] font-medium text-white cursor-pointer"
+                          style={{ backgroundColor: 'var(--warm)' }}
+                        >
+                          Review
+                          <ArrowRight className="h-3 w-3" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-
-                <div
-                  className="pt-3 border-t flex items-center justify-between text-[11px]"
-                  style={{ borderColor: 'var(--border-subtle)', color: 'var(--ink-muted)' }}
-                >
-                  <span>{p.documentCount} lectures</span>
-                  <span>{p.noteCount} notes</span>
-                </div>
-              </button>
-            ))}
-          </div>
-        </section>
+              ))}
+            </div>
+          </section>
+        )}
       </div>
     </div>
   );

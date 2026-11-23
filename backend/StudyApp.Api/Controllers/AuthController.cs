@@ -59,7 +59,7 @@ public sealed class AuthController(
         return Ok(new AuthResponse(
             token,
             expiresAt,
-            new UserDto(user.Id, user.Email, user.DisplayName, user.PreferredLanguage, workspace.Id)));
+            new UserDto(user.Id, user.Email, user.DisplayName, user.PreferredLanguage, user.DailyGoalPoints, workspace.Id)));
     }
 
     [HttpPost("login")]
@@ -94,7 +94,7 @@ public sealed class AuthController(
         return Ok(new AuthResponse(
             token,
             expiresAt,
-            new UserDto(user.Id, user.Email, user.DisplayName, user.PreferredLanguage, workspace.Id)));
+            new UserDto(user.Id, user.Email, user.DisplayName, user.PreferredLanguage, user.DailyGoalPoints, workspace.Id)));
     }
 
     [HttpGet("me")]
@@ -113,6 +113,29 @@ public sealed class AuthController(
         }
 
         var defaultWorkspaceId = user.Workspaces.OrderBy(w => w.CreatedAt).Select(w => w.Id).FirstOrDefault();
-        return Ok(new UserDto(user.Id, user.Email, user.DisplayName, user.PreferredLanguage, defaultWorkspaceId));
+        return Ok(new UserDto(user.Id, user.Email, user.DisplayName, user.PreferredLanguage, user.DailyGoalPoints, defaultWorkspaceId));
+    }
+
+    [HttpPut("profile")]
+    [Authorize]
+    public async Task<ActionResult<UserDto>> UpdateProfile(UpdateProfileRequest request, CancellationToken ct)
+    {
+        var userId = User.GetUserId();
+        var user = await db.Users
+            .Include(u => u.Workspaces)
+            .FirstOrDefaultAsync(u => u.Id == userId, ct);
+
+        if (user is null)
+        {
+            return Unauthorized();
+        }
+
+        user.DisplayName = request.DisplayName.Trim();
+        user.PreferredLanguage = string.IsNullOrWhiteSpace(request.PreferredLanguage) ? "ar" : request.PreferredLanguage.Trim();
+        user.DailyGoalPoints = Math.Clamp(request.DailyGoalPoints, 2, 50);
+        await db.SaveChangesAsync(ct);
+
+        var defaultWorkspaceId = user.Workspaces.OrderBy(w => w.CreatedAt).Select(w => w.Id).FirstOrDefault();
+        return Ok(new UserDto(user.Id, user.Email, user.DisplayName, user.PreferredLanguage, user.DailyGoalPoints, defaultWorkspaceId));
     }
 }

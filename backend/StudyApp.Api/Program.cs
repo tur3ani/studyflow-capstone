@@ -95,6 +95,8 @@ using (var scope = app.Services.CreateScope())
         {
             await db.Database.EnsureCreatedAsync();
         }
+        await db.Database.ExecuteSqlRawAsync(
+            """ALTER TABLE users ADD COLUMN IF NOT EXISTS "DailyGoalPoints" integer NOT NULL DEFAULT 6;""");
         logger.LogInformation("PostgreSQL database schema is ready.");
     }
     catch (Exception ex)

@@ -6,6 +6,14 @@ public sealed record GenerateQuizRequest(
     int QuestionCount = 4,
     string Language = "en");
 
+public sealed record CreateManualQuizQuestionRequest(
+    [Required] Guid ChunkId,
+    [Required, MaxLength(32)] string QuestionType,
+    [Required, MaxLength(1000)] string Prompt,
+    IReadOnlyList<string>? Options = null,
+    string? CorrectOption = null,
+    string? ExpectedPoints = null);
+
 public sealed record SubmitQuizAttemptRequest(
     [Required] string SubmittedAnswer);
 
