@@ -208,7 +208,7 @@ export function SettingsView({ user, onSaveProfile }: SettingsViewProps) {
                   setDailyGoalPoints(Number(e.target.value));
                   setSaved(false);
                 }}
-                className="flex-1 accent-[#2c4a7c]"
+                className="flex-1 accent-[#8052ff]"
               />
               <input
                 type="number"
@@ -395,29 +395,8 @@ export function SettingsView({ user, onSaveProfile }: SettingsViewProps) {
             borderColor: 'var(--border-subtle)',
           }}
         >
-          <h2 className="font-editorial text-xl font-medium">Appearance</h2>
+          <h2 className="font-editorial text-2xl">Appearance</h2>
           <div className="grid sm:grid-cols-2 gap-3">
-            <button
-              type="button"
-              onClick={() => theme !== 'light' && toggleTheme()}
-              className="rounded-2xl border p-4 text-left flex items-center justify-between cursor-pointer"
-              style={{
-                backgroundColor: theme === 'light' ? 'var(--accent-soft)' : 'var(--bg-canvas)',
-                borderColor: theme === 'light' ? 'var(--accent-border)' : 'var(--border-subtle)',
-              }}
-            >
-              <div className="flex items-center gap-3">
-                <Sun className="h-4 w-4" style={{ color: 'var(--warm)' }} />
-                <div>
-                  <div className="text-xs font-semibold">Warm Paper (Light)</div>
-                  <div className="text-[11px]" style={{ color: 'var(--ink-muted)' }}>
-                    Alabaster paper with calm ink contrast
-                  </div>
-                </div>
-              </div>
-              {theme === 'light' && <Check className="h-4 w-4" style={{ color: 'var(--accent)' }} />}
-            </button>
-
             <button
               type="button"
               onClick={() => theme !== 'dark' && toggleTheme()}
@@ -430,13 +409,42 @@ export function SettingsView({ user, onSaveProfile }: SettingsViewProps) {
               <div className="flex items-center gap-3">
                 <Moon className="h-4 w-4" style={{ color: 'var(--accent)' }} />
                 <div>
-                  <div className="text-xs font-semibold">Warm Obsidian (Dark)</div>
+                  <div className="text-xs font-semibold flex items-center gap-2">
+                    <span>Black Velvet (Dark)</span>
+                    <span className="inline-flex gap-1">
+                      <span className="h-2 w-2 rounded-full bg-black border border-white/25" />
+                      <span className="h-2 w-2 rounded-full bg-[#8052ff]" />
+                      <span className="h-2 w-2 rounded-full bg-[#ffb829]" />
+                      <span className="h-2 w-2 rounded-full bg-[#15846e]" />
+                    </span>
+                  </div>
                   <div className="text-[11px]" style={{ color: 'var(--ink-muted)' }}>
-                    Low-glare charcoal for late-night study
+                    Pure black void, Electric Iris pills & Saffron sparks
                   </div>
                 </div>
               </div>
               {theme === 'dark' && <Check className="h-4 w-4" style={{ color: 'var(--accent)' }} />}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => theme !== 'light' && toggleTheme()}
+              className="rounded-2xl border p-4 text-left flex items-center justify-between cursor-pointer"
+              style={{
+                backgroundColor: theme === 'light' ? 'var(--accent-soft)' : 'var(--bg-canvas)',
+                borderColor: theme === 'light' ? 'var(--accent-border)' : 'var(--border-subtle)',
+              }}
+            >
+              <div className="flex items-center gap-3">
+                <Sun className="h-4 w-4" style={{ color: 'var(--warm)' }} />
+                <div>
+                  <div className="text-xs font-semibold">Editorial Paper (Light)</div>
+                  <div className="text-[11px]" style={{ color: 'var(--ink-muted)' }}>
+                    Warm alabaster canvas harmonized with Iris & Verdant
+                  </div>
+                </div>
+              </div>
+              {theme === 'light' && <Check className="h-4 w-4" style={{ color: 'var(--accent)' }} />}
             </button>
           </div>
         </section>

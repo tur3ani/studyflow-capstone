@@ -1,6 +1,5 @@
 import { useState, type DragEvent, type FormEvent } from 'react';
 import {
-  BookMarked,
   FileText,
   FolderPlus,
   Home,
@@ -16,9 +15,10 @@ import {
 } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import type { DocumentSummaryDto, HealthResponse, ProjectSummaryDto, UserDto } from '../types/models';
+import { BrandMark } from './BrandMark';
 import { StudyModePicker } from './StudyModePicker';
 
-const COURSE_DOTS = ['#2c4a7c', '#b45309', '#15803d', '#7c3aed', '#0f766e'];
+const COURSE_DOTS = ['#8052ff', '#ffb829', '#15846e', '#38bdf8', '#e879f9'];
 
 interface SidebarProps {
   user: UserDto;
@@ -115,17 +115,8 @@ export function Sidebar({
           onClick={onOpenDashboard}
           className="flex items-center gap-2.5 cursor-pointer hover:opacity-85 transition"
         >
-          <div
-            className="h-7 w-7 rounded-lg flex items-center justify-center border"
-            style={{
-              backgroundColor: 'var(--bg-surface)',
-              borderColor: 'var(--border-strong)',
-              color: 'var(--accent)',
-            }}
-          >
-            <BookMarked className="h-4 w-4" />
-          </div>
-          <span className="font-editorial text-lg font-semibold tracking-tight">StudyFlow</span>
+          <BrandMark size={24} />
+          <span className="text-sm font-semibold tracking-tight">StudyFlow</span>
         </button>
 
         <button
@@ -330,8 +321,7 @@ export function Sidebar({
               type="button"
               disabled={!selectedProjectId || uploading}
               onClick={onTriggerUpload}
-              className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-[11px] font-medium text-white transition cursor-pointer disabled:opacity-50"
-              style={{ backgroundColor: 'var(--accent)' }}
+              className="btn-iris inline-flex items-center gap-1 px-3 py-1 text-[10px] uppercase cursor-pointer disabled:opacity-50"
             >
               <Upload className="h-3 w-3" />
               {uploading ? 'Importing...' : 'Import'}
